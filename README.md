@@ -1,77 +1,208 @@
-# ⚖️ Nepali Legal Assistant & Document Chatbot (Local RAG)
+# ⚖️ Nepali Legal Assistant & Document Chatbot (Hybrid RAG)
 
-An AI-powered Retrieval-Augmented Generation (RAG) system engineered for indexing, searching, and synthesizing information from Nepal Supreme Court precedents (Nepal Law Patrika - NKP) and legal statutes.
+An AI-powered Retrieval-Augmented Generation (RAG) system for indexing, searching, and synthesizing information from **Nepal Supreme Court precedents (Nepal Law Patrika - NKP)** and legal statutes.
 
-Built using **ChromaDB**, **SentenceTransformers**, **BM25**, **PyMuPDF**, **OpenCV + Tesseract OCR**, and **Groq LLM** (`openai/gpt-oss-20b`).
+Built with:
+
+- **ChromaDB**
+- **SentenceTransformers**
+- **BM25**
+- **PyMuPDF**
+- **OpenCV + Tesseract OCR**
+- **Groq LLM** (`openai/gpt-oss-20b`)
+- **Streamlit**
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.38+-red)](https://streamlit.io/)
 
 ---
 
 ## 🌟 Key Features
 
-- **Case-Aware Hybrid Retrieval**: Combines dense vector search (`paraphrase-multilingual-MiniLM-L12-v2`) with sparse keyword matching (`BM25Okapi`) and exact decision/case-number boosting (+0.65 score boost) to prevent case-mixing.
-- **OCR Fallback for Scanned PDFs**: Automatically detects low-quality scanned pages and applies OpenCV adaptive thresholding and PyTesseract Devanagari OCR (`nep` / `script/Devanagari`).
-- **Query Intent Detection**: Identifies whether a user is requesting a `CASE_SUMMARY`, `CASE_LOOKUP`, or `LEGAL_PROVISION`, and dynamically adapts retrieval depth and LLM prompt structures.
-- **Strict Case Boundary Grounding**: Enforces strict `CASE BOUNDARY` separation in the LLM system prompt to prevent hallucination and cross-contamination of facts across different legal cases.
-- **Interactive Streamlit Dashboard**: Offers configurable hybrid weights (`α`), citation inspection, vector index statistics, and parent-page context expansion.
+### 🔎 Case-Aware Hybrid Retrieval
+
+Combines multiple retrieval strategies:
+
+- Dense vector search using `paraphrase-multilingual-MiniLM-L12-v2`
+- Sparse keyword search using `BM25Okapi`
+- Exact decision/case-number matching
+- Case identifier boosting with a `+0.65` score boost
+
+This helps prevent retrieval from mixing information between unrelated legal cases.
+
+### 📝 OCR Fallback for Scanned PDFs
+
+Automatically detects pages with insufficient extracted text and falls back to OCR using:
+
+- OpenCV image preprocessing
+- Tesseract OCR
+- Nepali / Devanagari language support
+
+Supported OCR language configurations include:
+
+```text
+nep
+script/Devanagari
+```
+
+### 🧠 Query Intent Detection
+
+The system identifies the user's query intent and adapts retrieval and generation accordingly.
+
+Supported intents:
+
+- `CASE_SUMMARY`
+- `CASE_LOOKUP`
+- `LEGAL_PROVISION`
+
+### 🛡️ Strict Case Boundary Grounding
+
+The generation layer enforces strict case separation through system-prompt constraints.
+
+This helps prevent:
+
+- Cross-case contamination
+- Incorrect attribution of facts
+- Mixing decisions from different cases
+- Unsupported legal claims
+
+### 🖥️ Interactive Streamlit Dashboard
+
+The Streamlit interface provides:
+
+- Legal document chatbot
+- Configurable hybrid retrieval weights (`α`)
+- Retrieval diagnostics
+- Citation inspection
+- Vector index statistics
+- Parent-page context expansion
 
 ---
 
-## 📁 Project Architecture
+# 📁 Project Architecture
 
 ```text
+nepali-legal-rag/
+│
 ├── data/
-│   └── pdf/                # Raw NKP court decision PDFs
-├── models/                 # BM25 index (.pkl) and ingestion metadata (.json)
-├── chroma_db/              # Persistent ChromaDB vector database
+│   └── pdf/                     # Raw NKP court decision PDFs
+│
+├── models/                      # BM25 index and ingestion metadata
+│   ├── bm25_index.pkl
+│   └── metadata.json
+│
+├── chroma_db/                   # Persistent ChromaDB vector database
+│
 ├── src/
-│   ├── text_processor.py   # Devanagari cleaning, digit normalization, sentence chunking
-│   ├── ocr_engine.py       # OpenCV preprocessing & PyTesseract OCR fallback
-│   ├── hybrid_search.py    # Dense/Sparse fusion & case identifier reranking
-│   └── llm_generator.py    # Groq API integration & structured system prompt
-├── app.py                  # Streamlit web application dashboard
-├── ingest.py               # Data ingestion, OCR processing, chunking & indexing pipeline
-├── test_rag.py             # CLI test harness for retrieval and prompt verification
-├── .env.example            # Environment variables template
-├── requirements.txt        # Python dependencies
-└── README.md               # Project documentation
+│   ├── text_processor.py        # Devanagari cleaning, normalization,
+│   │                             # digit normalization and chunking
+│   │
+│   ├── ocr_engine.py            # OpenCV preprocessing and Tesseract OCR
+│   │
+│   ├── hybrid_search.py         # Dense + sparse retrieval and
+│   │                             # case identifier reranking
+│   │
+│   └── llm_generator.py         # Groq API integration and
+│                                 # structured grounding prompt
+│
+├── app.py                       # Streamlit web application
+├── ingest.py                    # PDF ingestion and indexing pipeline
+├── test_rag.py                  # CLI diagnostic test harness
+├── .env.example                 # Environment variable template
+├── .gitignore                   # Git ignore rules
+├── requirements.txt             # Python dependencies
+└── README.md                    # Project documentation
 ```
 
 ---
 
-## 🚀 Getting Started
+# 🚀 Getting Started
 
-### 1. Prerequisites
+## 1. Prerequisites
 
-- **Python**: 3.10 or higher
-- **Tesseract OCR**: Installed on your system with Devanagari/Nepali language packs (`nep`, `script/Devanagari`).
-  - **Windows**: Install Tesseract OCR and add it to your system `PATH`.
-- **Groq API Key**: Obtain an API key from the Groq Cloud Console.
+### Python
 
-### 2. Installation
+Python **3.10 or higher** is recommended.
 
-Clone the repository and create a virtual environment:
+Check your version:
 
 ```bash
-# Clone repository
+python --version
+```
+
+### Tesseract OCR
+
+Tesseract OCR must be installed with Nepali/Devanagari language support.
+
+### Windows
+
+Install Tesseract OCR and add it to your system `PATH`.
+
+### macOS
+
+```bash
+brew install tesseract
+brew install tesseract-lang
+```
+
+### Ubuntu / Debian
+
+```bash
+sudo apt update
+sudo apt install tesseract-ocr
+sudo apt install tesseract-ocr-nep
+```
+
+### Groq API Key
+
+A Groq API key is required for LLM generation.
+
+---
+
+# ⚙️ Installation
+
+## 2. Clone the Repository
+
+```bash
 git clone https://github.com/nischalgirii/nepali-legal-rag.git
 cd nepali-legal-rag
+```
 
-# Create virtual environment
+## 3. Create a Virtual Environment
+
+### Windows PowerShell
+
+```powershell
 python -m venv .venv
-
-# Activate on Windows PowerShell
 .venv\Scripts\Activate.ps1
+```
 
-# Activate on Windows CMD
+### Windows CMD
+
+```cmd
+python -m venv .venv
 .venv\Scripts\activate
+```
 
-# Install dependencies
+### macOS / Linux
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+## 4. Install Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 3. Environment Configuration
+---
 
-Create a `.env` file in the root directory:
+# 🔐 Environment Configuration
+
+Create a `.env` file in the project root:
 
 ```env
 GROQ_API_KEY=your_groq_api_key_here
@@ -79,11 +210,22 @@ GROQ_API_KEY=your_groq_api_key_here
 
 > **Important:** Never commit your `.env` file or API keys to GitHub.
 
+Make sure `.gitignore` contains:
+
+```gitignore
+.env
+.venv/
+__pycache__/
+chroma_db/
+data/pdf/
+models/
+```
+
 ---
 
-## 📚 Data Ingestion & Indexing
+# 📚 Data Ingestion & Indexing
 
-Place your PDF legal documents in:
+Place your legal PDF documents inside:
 
 ```text
 ./data/pdf/
@@ -95,77 +237,116 @@ Then run:
 python ingest.py
 ```
 
-The ingestion pipeline will:
+The ingestion pipeline performs the following operations:
 
-1. Parse native Devanagari text from PDFs using PyMuPDF.
-2. Detect pages with insufficient extracted text.
-3. Fall back to OpenCV preprocessing and Tesseract OCR for scanned pages.
-4. Extract relevant metadata such as decision number, date, subject, appellant, and respondent.
-5. Clean and normalize extracted Nepali text.
-6. Split documents into searchable chunks.
-7. Generate embeddings using SentenceTransformers.
-8. Store embeddings in ChromaDB.
-9. Build the BM25 sparse-search index.
-10. Save ingestion metadata for later retrieval.
+1. Extracts native Nepali/Devanagari text from PDFs using **PyMuPDF**.
+2. Detects pages with insufficient extracted text.
+3. Falls back to **OpenCV + Tesseract OCR** for scanned pages.
+4. Extracts metadata such as:
+   - Decision number
+   - Decision date
+   - Subject
+   - Appellant
+   - Respondent
+5. Cleans and normalizes Nepali text.
+6. Splits documents into searchable chunks.
+7. Generates embeddings using **SentenceTransformers**.
+8. Stores embeddings in **ChromaDB**.
+9. Builds the **BM25** sparse-search index.
+10. Saves ingestion metadata for later retrieval.
 
 ---
 
-## 🧠 Retrieval Pipeline
+# 🧠 Retrieval Pipeline
 
-The system uses a **hybrid retrieval architecture**:
+The system uses a hybrid retrieval architecture combining semantic and lexical retrieval.
 
 ```text
-                    User Query
-                        │
-                        ▼
-              ┌──────────────────┐
-              │ Query Intent      │
-              │ Detection         │
-              └────────┬─────────┘
-                       │
-             ┌─────────┴─────────┐
-             ▼                   ▼
-      Dense Vector Search     BM25 Search
-      SentenceTransformers    Keyword Search
-             │                   │
-             └─────────┬─────────┘
-                       ▼
-               Hybrid Score Fusion
-                       │
-                       ▼
-             Case / Decision Boost
-                       │
-                       ▼
-             Case Boundary Filter
-                       │
-                       ▼
-                 Top Documents
-                       │
-                       ▼
-                Groq LLM Response
+                         User Query
+                             │
+                             ▼
+                  ┌─────────────────────┐
+                  │   Query Intent      │
+                  │     Detection       │
+                  └──────────┬──────────┘
+                             │
+                    ┌────────┴────────┐
+                    ▼                 ▼
+            Dense Vector Search    BM25 Search
+          SentenceTransformers    Keyword Search
+                    │                 │
+                    └────────┬────────┘
+                             ▼
+                    Hybrid Score Fusion
+                             │
+                             ▼
+                  Case / Decision Boost
+                             │
+                             ▼
+                    Case Boundary Filter
+                             │
+                             ▼
+                       Top Documents
+                             │
+                             ▼
+                           Groq LLM
+                             │
+                             ▼
+                       Final Answer
 ```
 
-This approach improves retrieval for both:
+This architecture improves retrieval for:
 
 - Semantic questions
 - Exact legal terminology
 - Decision numbers
 - Case identifiers
 - Nepali legal phrases
+- Statutory references
 
 ---
 
-## 🛡️ Grounding & Hallucination Control
+# 🔬 Hybrid Retrieval
+
+The final retrieval score combines dense similarity and BM25 relevance.
+
+Conceptually:
+
+```text
+Hybrid Score =
+    α × Dense Similarity
+    +
+    (1 - α) × BM25 Score
+```
+
+Exact decision or case identifiers receive an additional boost:
+
+```text
+Case Match Boost = +0.65
+```
+
+This gives exact legal identifiers higher priority when the user explicitly references a case or decision number.
+
+---
+
+# 🛡️ Grounding & Hallucination Control
 
 The chatbot is designed to keep information separated by legal case.
 
-The generation layer uses strict **case-boundary grounding** so that information retrieved from one case is not incorrectly attributed to another case.
+The generation layer uses strict **case-boundary grounding** so that facts retrieved from one case are not incorrectly attributed to another case.
 
-The system should answer based on retrieved legal documents rather than relying on unsupported general knowledge.
+The model is instructed to:
+
+- Use retrieved documents as the primary source of truth.
+- Avoid mixing information from different cases.
+- Preserve case-specific facts.
+- Avoid unsupported claims.
+- Respect the detected query intent.
+- Indicate when the retrieved documents do not contain sufficient information.
 
 ---
 
-## 🖥️ Running the Chatbot
+# 🖥️ Running the Chatbot
 
 Start the Streamlit application:
 
@@ -179,11 +360,18 @@ Then open:
 http://localhost:8501
 ```
 
-The dashboard provides access to the legal document chatbot and retrieval diagnostics.
+The dashboard provides access to:
+
+- Legal document search
+- Question answering
+- Retrieval diagnostics
+- Citation inspection
+- Hybrid-search configuration
+- Index statistics
 
 ---
 
-## 🧪 Testing
+# 🧪 Testing
 
 Run the CLI diagnostic test suite:
 
@@ -191,31 +379,32 @@ Run the CLI diagnostic test suite:
 python test_rag.py
 ```
 
-This can be used to inspect:
+The test harness can be used to inspect:
 
 - Retrieval ranking
 - Hybrid search behavior
 - Case identifier matching
+- Query intent detection
 - Prompt grounding
 - Generated responses
 
 ---
 
-## 💡 Sample Queries
+# 💡 Sample Queries
 
-### Case Summary
+## Case Summary
 
 ```text
 मुद्दा नम्बर ४ को संक्षिप्त विवरण दिनुहोस्
 ```
 
-### Decision Lookup
+## Decision Lookup
 
 ```text
 निर्णय नं. ९८७६ फैसला मिति र मुख्य आदेश के हो?
 ```
 
-### Legal Provision
+## Legal Provision
 
 ```text
 नेपालको अन्तरिम संविधान २०६३ को धारा ३२ बमोजिमको रिट
@@ -223,50 +412,94 @@ This can be used to inspect:
 
 ---
 
-## 🔧 Configuration
-
-The hybrid retrieval system can be tuned according to the dataset.
-
-Important components include:
+# 🔧 Technology Stack
 
 | Component | Purpose |
 |---|---|
-| SentenceTransformers | Semantic/vector retrieval |
-| BM25Okapi | Sparse keyword retrieval |
-| ChromaDB | Persistent vector storage |
-| PyMuPDF | PDF text extraction |
-| OpenCV | OCR image preprocessing |
-| Tesseract OCR | Nepali/Devanagari OCR |
-| Groq | LLM generation |
-| Streamlit | Web interface |
+| **Python** | Core application development |
+| **SentenceTransformers** | Semantic/vector retrieval |
+| **BM25Okapi** | Sparse keyword retrieval |
+| **ChromaDB** | Persistent vector storage |
+| **PyMuPDF** | PDF text extraction |
+| **OpenCV** | OCR image preprocessing |
+| **Tesseract OCR** | Nepali/Devanagari OCR |
+| **Groq** | LLM generation |
+| **Streamlit** | Web interface |
 
 ---
 
-## ⚠️ Limitations
+# ☁️ Streamlit Cloud Deployment
 
-- OCR quality depends on the quality and layout of scanned PDFs.
-- Legal terminology may contain OCR-specific spelling errors.
-- Retrieval quality depends on chunking, embedding quality, and BM25 configuration.
-- The system is a document-grounded research assistant and should not be treated as a substitute for professional legal advice.
-- A Groq API key is required for the LLM generation component.
+For Streamlit Cloud deployment, add your API key through:
+
+```text
+App Settings → Secrets
+```
+
+Use:
+
+```toml
+GROQ_API_KEY = "your_groq_api_key_here"
+```
+
+Then configure `llm_generator.py` to read the key from `st.secrets` when running on Streamlit Cloud.
 
 ---
 
-## 👤 Author
+# ⚠️ Limitations
+
+- OCR quality depends on the quality, resolution, and layout of scanned PDFs.
+- Nepali legal terminology may contain OCR-specific spelling errors.
+- Retrieval quality depends on:
+  - Chunk size
+  - Chunk overlap
+  - Embedding model
+  - BM25 configuration
+  - Hybrid-search weighting
+- Poorly scanned documents may produce incomplete or noisy text.
+- LLM output quality depends on the quality of the retrieved context.
+
+---
+
+# 🔒 Security
+
+Do not commit sensitive credentials or generated indexes to GitHub.
+
+At minimum, add the following to `.gitignore`:
+
+```gitignore
+.env
+.venv/
+__pycache__/
+chroma_db/
+models/
+data/pdf/
+```
+
+---
+
+# 📄 License
+
+This project is licensed under the **MIT License**.
+
+See the [LICENSE](LICENSE) file for details.
+
+---
+
+# 👨‍💻 Author
 
 **Nischal Giri**
 
-*Bachelor of Computer Applications (BCA) Student*
-
-Kathmandu, Nepal
-
-GitHub: https://github.com/nischalgirii
+GitHub: [@nischalgirii](https://github.com/nischalgirii)
 
 ---
 
-## 📄 License
+## ⭐ Contributing
 
-Add the project's preferred license here before publishing the repository publicly.
-#   L e g a l _ R A G  
- #   L e g a l _ R A G  
- 
+Contributions, suggestions, and improvements are welcome.
+
+1. Fork the repository.
+2. Create a feature branch.
+3. Commit your changes.
+4. Push the branch.
+5. Open a Pull Request.
