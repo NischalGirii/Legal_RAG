@@ -1,0 +1,21 @@
+# Python-generated files
+# ChromaDB
+chroma_db/
+
+# Environment
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# IDE
+.vscode/
+.idea/
+
+# Local data
+data/
+
+models

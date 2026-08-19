@@ -1,0 +1,32 @@
+[project]
+name = "nepali-rag-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "NischalGirii", email = "NischalGirii@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "chromadb>=1.5.9",
+    "groq>=1.6.0",
+    "numpy>=2.5.2",
+    "opencv-python-headless>=5.0.0.93",
+    "pillow>=12.3.0",
+    "pymupdf>=1.28.2",
+    "pytesseract>=0.3.13",
+    "python-dotenv>=1.0.0",
+    "rank-bm25>=0.2.2",
+    "sentence-transformers>=6.0.0",
+    "streamlit>=1.61.1",
+    "torch>=2.13.0",
+    "torchaudio>=2.11.0",
+    "torchvision>=0.28.0",
+]
+
+[project.scripts]
+nepali-rag-project = "nepali_rag_project:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"

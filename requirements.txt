@@ -1,0 +1,24 @@
+--extra-index-url https://download.pytorch.org/whl/cu118
+
+# UI & Framework
+streamlit
+
+# Document Processing & Image Manipulation
+pymupdf
+opencv-python-headless
+pytesseract
+pillow
+
+# Vector Storage & Search
+chromadb
+rank-bm25
+numpy
+
+# Machine Learning & Local Fine-Tuning
+sentence-transformers
+torch
+torchvision
+torchaudio
+
+groq
+python-dotenv
