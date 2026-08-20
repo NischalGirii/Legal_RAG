@@ -4,6 +4,35 @@ import unicodedata
 NEPALI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 ASCII_TO_NEPALI = str.maketrans("0123456789", "०१२३४५६७८९")
 
+# ========================================================================
+# OCR FIXES (common errors from scanned PDFs) – expanded
+# ========================================================================
+OCR_FIXES = {
+    "SEAT": "बैद्यनाथ",          # Case 9099 judge name
+    "का.मु.प्": "",              # Remove stray characters (e.g., from 9100)
+    "धानन्यायाधीश": "प्रधानन्यायाधीश",
+    "प्रधानन्यायाधीश श्": "प्रधानन्यायाधीश श्री",
+    # New fixes based on observed artifacts
+    "रीरी": "श्री",
+    "काश": "प्रकाश",
+    "का.मु.प्, प्रधानन्यायाधीश": "प्रधानन्यायाधीश",
+    "प्रधानन्यायाधीश रीरी": "प्रधानन्यायाधीश श्री",
+    "प्रधानन्यायाधीश श्, ी": "प्रधानन्यायाधीश श्री",
+    "सम्माननीय का.मु.प्, धानन्यायाधीश": "प्रधानन्यायाधीश",
+    "सम्माननीय का.मु.प्, प्रधानन्यायाधीश": "प्रधानन्यायाधीश",
+    "का.मु.प्": "",              # Remove anyway
+    "प्रधानन्यायाधीश श्, ी": "प्रधानन्यायाधीश श्री",  # repeated for safety
+    "सम्माननीय का.मु.प्": "",
+}
+
+def apply_ocr_fixes(text: str) -> str:
+    """Replace known OCR artifacts with correct Nepali text."""
+    if not text:
+        return text
+    for wrong, correct in OCR_FIXES.items():
+        text = text.replace(wrong, correct)
+    return text
+
 
 def clean_devanagari_text(text: str) -> str:
     if not text:
@@ -13,6 +42,8 @@ def clean_devanagari_text(text: str) -> str:
     text = re.sub(r"[\u0000-\u0008\u000B\u000C\u000E-\u001F]", " ", text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
+    # Apply OCR fixes after basic cleaning
+    text = apply_ocr_fixes(text)
     return text.strip()
 
 
