@@ -83,36 +83,35 @@ The Streamlit interface provides:
 # 📁 Project Architecture
 
 ```text
-nepali-legal-rag/
+nepali_rag_project/
 │
 ├── data/
-│   └── pdf/                     # Raw NKP court decision PDFs
+│   ├── pdf/                 # Raw NKP court decision PDFs
+│   └── txt/                 # Extracted raw text files
 │
-├── models/                      # BM25 index and ingestion metadata
+├── models/                  # BM25 index, metadata, case summaries, embeddings
+│   ├── paraphrase-multilingual-MiniLM-L12-v2/
 │   ├── bm25_index.pkl
-│   └── metadata.json
+│   ├── case_summaries.json
+│   └── ingest_metadata.json
 │
-├── chroma_db/                   # Persistent ChromaDB vector database
+├── chroma_db/               # Persistent ChromaDB vector database
 │
-├── src/
-│   ├── text_processor.py        # Devanagari cleaning, normalization,
-│   │                             # digit normalization and chunking
-│   │
-│   ├── ocr_engine.py            # OpenCV preprocessing and Tesseract OCR
-│   │
-│   ├── hybrid_search.py         # Dense + sparse retrieval and
-│   │                             # case identifier reranking
-│   │
-│   └── llm_generator.py         # Groq API integration and
-│                                 # structured grounding prompt
+├── src/                     # Core modular components
+│   ├── hybrid_search.py     # Sparse (BM25) + Dense retrieval & case reranking
+│   ├── llm_generator.py     # Groq API integration & structured grounding prompts
+│   ├── ocr_engine.py        # OpenCV image preprocessing & Tesseract OCR
+│   └── text_processor.py    # Devanagari cleaning, normalization, & chunking
 │
-├── app.py                       # Streamlit web application
-├── ingest.py                    # PDF ingestion and indexing pipeline
-├── test_rag.py                  # CLI diagnostic test harness
-├── .env.example                 # Environment variable template
-├── .gitignore                   # Git ignore rules
-├── requirements.txt             # Python dependencies
-└── README.md                    # Project documentation
+├── app.py                   # Streamlit web application interface
+├── ingest.py                # PDF ingestion and vector/sparse indexing pipeline
+├── query_analyzer.py        # Intent detection and query classification router
+├── test_rag.py              # CLI diagnostic test harness
+├── pyproject.toml           # Project dependency configuration
+├── uv.lock                  # uv package manager lockfile
+├── .env                     # Environment variables (Groq API Key)
+├── .gitignore               # Git ignore rules
+└── README.md                # Project documentation
 ```
 
 ---
