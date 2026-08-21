@@ -6,7 +6,7 @@ import chromadb
 import streamlit as st
 from sentence_transformers import SentenceTransformer
 
-from src.text_processor import clean_devanagari_text
+from src.text_processor import clean_devanagari_text, normalize_digits
 from src.hybrid_search import perform_hybrid_search, detect_query_intent, extract_query_identifiers
 from llm_generator import generate_nepali_answer
 
@@ -37,16 +37,11 @@ def resolve_followup(query: str, current_case: dict, last_mentioned: dict) -> tu
     if not query:
         return query, current_case
 
-    identifiers = extract_query_identifiers(query)
-    new_case = None
+    identifiers = extract_query_identifiers(query, active_case_id=current_case.get("case_id") if current_case else None)
+    if identifiers.get("decision_no") and len(identifiers.get("decision_no", "").split(",")) >= 2:
+        return query, current_case
     if identifiers.get("decision_no"):
         new_case = {"case_id": f"decision_{identifiers['decision_no']}", "decision_no": identifiers['decision_no']}
-    elif identifiers.get("source"):
-        new_case = {"case_id": identifiers["source"], "source": identifiers["source"]}
-    elif identifiers.get("source_stem"):
-        new_case = {"case_id": identifiers["source_stem"], "source": identifiers["source_stem"]}
-
-    if new_case:
         return query, new_case
 
     tokens = set(query.lower().split())
@@ -128,16 +123,41 @@ if prompt := st.chat_input("कानूनी विषय, फैसला, �
         st.markdown(prompt)
 
     cleaned_query = clean_devanagari_text(prompt)
+
+    # ---- STEP 1: EXTRACT IDENTIFIERS ----
+    identifiers = extract_query_identifiers(cleaned_query, active_case_id=st.session_state.current_case.get("case_id") if st.session_state.current_case else None)
+
+    # ---- STEP 2: DETECT COMPARISON ----
+    numbers = re.findall(r'\b([0-9]{3,4})\b', normalize_digits(cleaned_query))
+    if len(numbers) >= 2:
+        comparison_mode = True
+        # For comparison, we should NOT restrict search to any single case.
+        # So we temporarily set current_case to None for the retrieval step.
+        search_case = None
+    else:
+        comparison_mode = False
+        search_case = st.session_state.current_case
+
+    # ---- STEP 3: SET CURRENT CASE IF A SINGLE NUMBER IS DETECTED ----
+    if not comparison_mode and identifiers.get("decision_no"):
+        new_case = {"case_id": f"decision_{identifiers['decision_no']}", "decision_no": identifiers['decision_no']}
+        st.session_state.current_case = new_case
+        st.session_state.case_history.append((new_case, prompt))
+        search_case = new_case
+
+    # ---- STEP 4: RESOLVE FOLLOW-UP ----
     current_case_dict = st.session_state.current_case
     last_mentioned = st.session_state.last_mentioned_case
     resolved_query, new_case = resolve_followup(cleaned_query, current_case_dict, last_mentioned)
 
-    if new_case != current_case_dict:
+    if new_case != st.session_state.current_case and not comparison_mode:
         st.session_state.current_case = new_case
         st.session_state.case_history.append((new_case, prompt))
-        if new_case == last_mentioned:
-            st.session_state.last_mentioned_case = None
-        # No rerun – answer immediately
+        search_case = new_case
+
+    if not st.session_state.current_case and last_mentioned and not comparison_mode:
+        st.session_state.current_case = last_mentioned
+        search_case = last_mentioned
 
     final_query = resolved_query
 
@@ -155,6 +175,7 @@ if prompt := st.chat_input("कानूनी विषय, फैसला, �
                 chunk_metadata=chunk_metadata,
                 top_k=top_k,
                 alpha=alpha,
+                current_case=search_case  # use search_case (None for comparison, or the current case)
             )
 
         with st.spinner("निर्णयका प्रमाणमा आधारित उत्तर तयार हुँदैछ..."):
@@ -162,7 +183,9 @@ if prompt := st.chat_input("कानूनी विषय, फैसला, �
                 query=final_query,
                 retrieved_items=search_results,
                 current_case=st.session_state.current_case,
-                metadata_info=metadata_info  # <-- added this parameter
+                metadata_info=metadata_info,
+                comparison_mode=comparison_mode,
+                detected_numbers=numbers if comparison_mode else None
             )
 
         decision_matches = re.findall(r'निर्णय नं\.\s*(\d+)', final_answer)

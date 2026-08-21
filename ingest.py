@@ -42,43 +42,58 @@ def _first_match(patterns, text):
     return ""
 
 
-def extract_case_metadata(page_text: str, file_name: str) -> dict:
-    """Extract comprehensive case metadata including judges, lawyers, provisions."""
-    text = clean_devanagari_text(page_text)
+def extract_metadata_from_full_text(full_text: str, file_name: str) -> dict:
+    """
+    Extract case metadata from the entire document text.
+    This is more robust than only scanning the header.
+    """
+    text = clean_devanagari_text(full_text)
     norm = normalize_digits(text)
 
+    # ---- Decision Number ----
     decision_no = _first_match([
         r"निर्णय\s*नं\.?\s*([0-9]+)",
         r"Decision\s*(?:No\.?|Number)\s*[:.-]?\s*([0-9]+)",
     ], norm)
 
+    # ---- Date ----
+    # Look for both "फैसला मिति" and "आदेश मिति"
     date = _first_match([
         r"फैसला\s*मिति\s*[:：\-]?\s*([0-9]{3,4}[./\-।][0-9]{1,2}[./\-।][0-9]{1,2})",
         r"आदेश\s*मिति\s*[:：\-]?\s*([0-9]{3,4}[./\-।][0-9]{1,2}[./\-।][0-9]{1,2})",
     ], norm)
 
+    # ---- Subject / Case Type ----
+    # Try to extract from "विषय" line
     subject = _first_match([
         r"विषय\s*[ः:：-]?\s*([^\n|]+)",
     ], text)
 
+    # If subject is still empty, try to get it from the first occurrence of "उत्प्रेषण", "परमादेश", etc.
+    if not subject or subject == "हुने":
+        case_type_keywords = ["उत्प्रेषण", "परमादेश", "बन्दीप्रत्यक्षीकरण", "अर्जी", "निवेदन"]
+        for kw in case_type_keywords:
+            if kw in text:
+                subject = kw
+                break
+
+    # ---- Court ----
     court = "सर्वोच्च अदालत" if "सर्वोच्च अदालत" in text else ""
 
-    # Case type (e.g., उत्प्रेषण, परमादेश)
-    case_type = _first_match([
-        r"विषय\s*[:：-]?\s*([^\n]+)",
-    ], text) or ""
-
-    # Parties
+    # ---- Parties ----
+    # Search the entire text for petitioner/respondent patterns
     appellant = _first_match([
         r"पुनरावेदक/विपक्षी\s*[:：-]\s*([^\n]+)",
         r"निवेदक\s*[:：-]\s*([^\n]+)",
+        r"पुनरावेदक\s*[:：-]\s*([^\n]+)",
     ], text)
     respondent = _first_match([
         r"प्रत्यर्थी/निवेदक\s*[:：-]\s*([^\n]+)",
         r"विपक्षी\s*[:：-]\s*([^\n]+)",
+        r"प्रत्यर्थी\s*[:：-]\s*([^\n]+)",
     ], text)
 
-    # Lawyers
+    # ---- Lawyers ----
     appellant_lawyer = _first_match([
         r"पुनरावेदकका\s*तर्फबाट\s*[:：-]?\s*([^\n]+)",
         r"निवेदकका\s*तर्फबाट\s*[:：-]?\s*([^\n]+)",
@@ -88,47 +103,42 @@ def extract_case_metadata(page_text: str, file_name: str) -> dict:
         r"विपक्षीका\s*तर्फबाट\s*[:：-]?\s*([^\n]+)",
     ], text)
 
-    # ================================================================
-    # IMPROVED JUDGE EXTRACTION (with OCR noise filtering)
-    # ================================================================
-    # Chief Justice
+    # ---- Judges ----
+    # Look for patterns that appear anywhere: "प्रधानन्यायाधीश", "न्यायाधीश"
     chief_justice = _first_match([
         r"सम्माननीय\s*(?:का\.मु\.\s*)?प्रधानन्यायाधीश\s*श्री\s*([^\n]+)",
         r"प्रधानन्यायाधीश\s*श्री\s*([^\n]+)",
     ], text)
 
-    # For other judges, capture lines with "माननीय न्यायाधीश श्री"
+    # For other judges, capture all lines containing "माननीय न्यायाधीश" or "न्यायाधीश श्री"
     judge_lines = re.findall(r"माननीय\s*न्यायाधीश\s*श्री\s*([^\n]+)", text)
-    # Also capture lines without "माननीय" but with "न्यायाधीश श्री"
     if not judge_lines:
         judge_lines = re.findall(r"न्यायाधीश\s*श्री\s*([^\n]+)", text)
 
-    # Filter out lines that are mostly OCR noise (e.g., contain 'का.मु.प्')
+    # Filter out OCR noise
     judge_lines = [line for line in judge_lines if "का.मु.प्" not in line]
 
-    # Clean each judge name: remove trailing commas, extra spaces
     cleaned_judges = []
     for line in judge_lines:
-        # Split by "र" or comma
         for part in re.split(r"\s*र\s*|\s*,\s*", line):
             part = part.strip()
             if part and len(part) > 2:
-                # Remove anything after a comma that looks like OCR noise
                 part = re.sub(r",.*$", "", part)
                 cleaned_judges.append(part)
 
-    # Combine: Chief Justice first, then others
     judges_list = []
     if chief_justice:
         judges_list.append(f"प्रधानन्यायाधीश {chief_justice}")
     judges_list.extend(cleaned_judges)
     judges_str = ", ".join(judges_list) if judges_list else ""
 
-    # Legal provisions cited (look for "दफा", "धारा", "ऐन")
+    # ---- Legal Provisions ----
+    # Find all unique provisions mentions
     provisions = re.findall(r"(?:दफा|धारा)\s*[०-९0-9]+(?:\s*\([^)]+\))?", text)
     provisions = list(dict.fromkeys(provisions))  # unique
     provisions_str = ", ".join(provisions)
 
+    # ---- Case ID ----
     stem = os.path.splitext(file_name)[0]
     case_id = f"decision_{decision_no}" if decision_no else f"file_{stem}"
 
@@ -138,7 +148,6 @@ def extract_case_metadata(page_text: str, file_name: str) -> dict:
         "date": date,
         "subject": subject,
         "court": court,
-        "case_type": case_type,
         "parties": {
             "appellant": appellant,
             "respondent": respondent,
@@ -184,18 +193,18 @@ def process_local_documents(target_path: str = None):
             total_pages = len(doc)
             total_pages_processed += total_pages
 
-            # =========================================================
-            # NEW: Use first 5 pages (or all if fewer) for metadata
-            # =========================================================
-            header_pages = min(5, total_pages)
-            header_text_parts = []
-            for pno in range(header_pages):
+            # ---- Extract FULL document text for metadata ----
+            full_text_parts = []
+            for pno in range(total_pages):
                 p = doc[pno]
                 native = p.get_text().strip()
                 if not is_valid_devanagari_text(native, min_ratio=0.4):
                     native = ocr_scanned_page(p, lang_flag)
-                header_text_parts.append(clean_devanagari_text(native))
-            case_meta = extract_case_metadata("\n".join(header_text_parts), file_name)
+                full_text_parts.append(clean_devanagari_text(native))
+            full_text = "\n\n".join(full_text_parts)
+
+            # Extract metadata from the entire text
+            case_meta = extract_metadata_from_full_text(full_text, file_name)
 
             print(
                 f"  case_id={case_meta['case_id']} decision={case_meta['decision_no']} "
@@ -211,7 +220,7 @@ def process_local_documents(target_path: str = None):
                 f"मिति: {case_meta['date']}\n"
                 f"अदालत: {case_meta['court']}\n"
                 f"विषय: {case_meta['subject']}\n"
-                f"मुद्दाको प्रकार: {case_meta['case_type']}\n"
+                f"मुद्दाको प्रकार: {case_meta.get('case_type', '')}\n"
                 f"न्यायाधीश: {case_meta['judges']}\n"
                 f"पुनरावेदक/निवेदक: {case_meta['parties'].get('appellant', '')}\n"
                 f"प्रत्यर्थी/विपक्षी: {case_meta['parties'].get('respondent', '')}\n"
@@ -219,7 +228,6 @@ def process_local_documents(target_path: str = None):
                 f"प्रत्यर्थीका कानून व्यवसायी: {case_meta['respondent_lawyer']}\n"
                 f"प्रमुख कानूनी प्रावधान: {case_meta['provisions']}"
             )
-            # Store with special metadata
             all_chunks.append(header_summary)
             chunk_metadata.append({
                 "source": file_name,
@@ -251,7 +259,7 @@ def process_local_documents(target_path: str = None):
                         f"[DATE={case_meta['date'] or 'UNKNOWN'}] "
                         f"[SUBJECT={case_meta['subject'] or 'UNKNOWN'}] "
                         f"[COURT={case_meta['court'] or 'UNKNOWN'}] "
-                        f"[CASE_TYPE={case_meta['case_type'] or 'UNKNOWN'}] "
+                        f"[CASE_TYPE={case_meta.get('case_type', '') or 'UNKNOWN'}] "
                         f"[JUDGES={case_meta['judges'] or 'UNKNOWN'}] "
                         f"[APPELLANT={case_meta['parties'].get('appellant', 'UNKNOWN')}] "
                         f"[RESPONDENT={case_meta['parties'].get('respondent', 'UNKNOWN')}] "
@@ -277,6 +285,7 @@ def process_local_documents(target_path: str = None):
         print("No valid text chunks extracted.")
         return
 
+    # ---- Embedding and Indexing ----
     embeddings = model.encode(
         all_chunks, normalize_embeddings=True, show_progress_bar=True
     ).tolist()
@@ -293,7 +302,6 @@ def process_local_documents(target_path: str = None):
             "date": meta["date"],
             "subject": meta["subject"],
             "court": meta["court"],
-            "case_type": meta["case_type"],
             "appellant": meta["parties"].get("appellant", ""),
             "respondent": meta["parties"].get("respondent", ""),
             "appellant_lawyer": meta.get("appellant_lawyer", ""),
@@ -319,6 +327,7 @@ def process_local_documents(target_path: str = None):
     with open("./models/bm25_index.pkl", "wb") as f:
         pickle.dump({"bm25": bm25, "metadata": chunk_metadata}, f)
 
+    # ---- Save metadata summary ----
     summary = {
         "last_ingested": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "total_files": len(valid_files),
@@ -337,7 +346,6 @@ def process_local_documents(target_path: str = None):
                 "date": m["date"],
                 "subject": m["subject"],
                 "court": m["court"],
-                "case_type": m["case_type"],
                 "parties": m["parties"],
                 "judges": m.get("judges", ""),
                 "appellant_lawyer": m.get("appellant_lawyer", ""),
