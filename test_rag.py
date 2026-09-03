@@ -4,9 +4,11 @@ import os
 import pickle
 import chromadb
 from sentence_transformers import SentenceTransformer
+from src.config import CHROMA_PATH, COLLECTION_NAME, EMBEDDING_MODEL_PATH, BM25_INDEX_PATH, LLM_MODEL
 from src.text_processor import clean_devanagari_text, clean_and_repair_nepali_output
 from src.hybrid_search import perform_hybrid_search
 from src.llm_generator import generate_nepali_answer
+from src.sparse_index import retriever_from_pickle
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -20,16 +22,16 @@ def run_test():
     print(f"Repaired Output: {repaired}")
 
     print("\n--- 2. Loading search engines ---")
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")
-    collection = chroma_client.get_collection(name="nepali_legal_docs")
+    chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
+    collection = chroma_client.get_collection(name=COLLECTION_NAME)
     print(f"ChromaDB total count: {collection.count()}")
 
-    model = SentenceTransformer("./models/paraphrase-multilingual-MiniLM-L12-v2")
+    model = SentenceTransformer(EMBEDDING_MODEL_PATH)
 
-    with open("./models/bm25_index.pkl", "rb") as f:
+    with open(BM25_INDEX_PATH, "rb") as f:
         bm25_data = pickle.load(f)
 
-    bm25 = bm25_data["bm25"]
+    bm25 = retriever_from_pickle(bm25_data)
     chunk_metadata = bm25_data["metadata"]
 
     test_queries = [
@@ -60,7 +62,7 @@ def run_test():
             print(f"    Parent Page Len : {len(item.get('page_text', ''))} chars")
 
         print("\n--- Generating LLM Response via Groq ---")
-        answer = generate_nepali_answer(cleaned_query, search_results, model_name="openai/gpt-oss-20b")
+        answer = generate_nepali_answer(cleaned_query, search_results, model_name=LLM_MODEL)
         print("\n💡 AI Response:")
         print(answer)
 

@@ -6,16 +6,30 @@ ASCII_TO_NEPALI = str.maketrans("0123456789", "०१२३४५६७८९")
 
 OCR_FIXES = {
     "SEAT": "बैद्यनाथ",
+    "SAT": "बैद्यनाथ",
+    "Seq": "बैद्यनाथ",
     "का.मु.प्": "",
     "धानन्यायाधीश": "प्रधानन्यायाधीश",
     "प्रधानन्यायाधीश श्": "प्रधानन्यायाधीश श्री",
     "रीरी": "श्री",
+    "प्रप्रप्रकाश": "प्रकाश",
+    "प्रप्रकाश": "प्रकाश",
     "काश": "प्रकाश",
     "प्रधानन्यायाधीश रीरी": "प्रधानन्यायाधीश श्री",
     "प्रधानन्यायाधीश श्, ी": "प्रधानन्यायाधीश श्री",
     "सम्माननीय का.मु.प्, धानन्यायाधीश": "प्रधानन्यायाधीश",
     "सम्माननीय का.मु.प्, प्रधानन्यायाधीश": "प्रधानन्यायाधीश",
+    "श्श्री": "श्री",
+    "प्रप्रधान": "प्रधान",
+    "उत्रेषण": "उत्प्रेषण",
 }
+
+_OCR_NOISE_TOKEN = re.compile(
+    r"(?:(?<=\s)|(?<=^)|(?<=,))(?:SAT|SEAT|Seq|Ud|uM|mM|MM|uMM)(?=\s|,|$)",
+    re.I,
+)
+_OCR_LONE_INITIAL = re.compile(r"(?:(?<=\s)|(?<=^))[MuU](?:d)?(?:\s+)(?=विद्वान|अधिवक्ता|सहन्याया|नायब|श्री)")
+
 
 def apply_ocr_fixes(text: str) -> str:
     if not text:
@@ -24,15 +38,40 @@ def apply_ocr_fixes(text: str) -> str:
         text = text.replace(wrong, correct)
     return text
 
+
+def clean_ocr_field(value) -> str:
+    """Clean a metadata field that may contain OCR junk (M, Ud, SAT, doubled letters)."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        parts = [clean_ocr_field(v) for v in value.values() if v]
+        return ", ".join(p for p in parts if p)
+    if isinstance(value, (list, tuple)):
+        return ", ".join(clean_ocr_field(v) for v in value if v)
+    text = apply_ocr_fixes(str(value)).strip()
+    if not text or text.upper() in {"UNKNOWN", "N/A", "NONE"}:
+        return ""
+    text = _OCR_NOISE_TOKEN.sub(" ", text)
+    text = _OCR_LONE_INITIAL.sub(" ", text)
+    text = re.sub(r"^[\s,;:।|MUu/-]+", "", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\s+,", ",", text)
+    text = re.sub(r",\s*,+", ", ", text)
+    return text.strip(" ,;|-")
+
 def clean_devanagari_text(text: str) -> str:
     if not text:
         return ""
     text = unicodedata.normalize("NFC", text)
-    text = text.replace("\x00", " ")
-    text = re.sub(r"[\u0000-\u0008\u000B\u000C\u000E-\u001F]", " ", text)
+    text = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]", " ", text)
+    text = re.sub(
+        r"[^\u0900-\u097F\u0020-\u007Ea-zA-Z0-9\u0964\u0965\t\n\r]",
+        " ",
+        text,
+    )
+    text = apply_ocr_fixes(text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
-    text = apply_ocr_fixes(text)
     return text.strip()
 
 def normalize_digits(text: str) -> str:
@@ -47,7 +86,7 @@ def is_valid_devanagari_text(text: str, min_ratio: float = 0.4) -> bool:
     devanagari = sum("\u0900" <= c <= "\u097F" for c in letters)
     return (devanagari / len(letters)) >= min_ratio
 
-def chunk_text_by_sentences(text: str, max_chars: int = 500, overlap_sentences: int = 1) -> list[str]:
+def chunk_text_by_sentences(text: str, max_chars: int = 1000, overlap_sentences: int = 2) -> list[str]:
     if not text:
         return []
     sentences = [s.strip() for s in re.split(r"(?<=[।!?])\s+|\n+", text) if s.strip()]
@@ -83,39 +122,26 @@ def clean_and_repair_nepali_output(text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text
 
-# ========================================================================
-# NEW: Prakaran-aware chunking for NKP PDFs
-# ========================================================================
-def chunk_by_prakaran(text: str, max_chars: int = 600, overlap_chars: int = 100) -> list[tuple[str, str]]:
-    """
-    Split text by प्रकरण नं. markers and return (chunk_text, prakaran_no).
-    """
+def chunk_by_prakaran(text: str, max_chars: int = 1000, overlap_chars: int = 150) -> list[tuple[str, str]]:
     if not text:
         return []
-    # Regex to find "प्रकरण नं. X" or "(प्रकरण नं. X)"
     pattern = r"(\(?\s*प्रकरण\s*नं\.\s*([०-९0-9]+)\s*\)?)"
     parts = re.split(pattern, text)
-    
     chunks = []
     current_prakaran = None
     current_text = []
     current_len = 0
-    
     for i, part in enumerate(parts):
-        # If part matches the pattern, it's a paragraph marker
         if re.match(pattern, part, re.I):
-            # If we have accumulated text, save it with the previous paragraph number
             if current_text and current_prakaran is not None:
                 chunk_text = " ".join(current_text).strip()
                 if chunk_text:
                     chunks.append((chunk_text, current_prakaran))
-            # Start a new paragraph
             num_match = re.search(r"([०-९0-9]+)", part)
             current_prakaran = num_match.group(1) if num_match else None
             current_text = []
             current_len = 0
         else:
-            # Add text to current paragraph
             if part.strip():
                 sentences = re.split(r"(?<=[।!?])\s+", part)
                 for sent in sentences:
@@ -131,11 +157,8 @@ def chunk_by_prakaran(text: str, max_chars: int = 600, overlap_chars: int = 100)
                     else:
                         current_text.append(sent)
                         current_len += len(sent)
-    
-    # Add the last chunk
     if current_text and current_prakaran is not None:
         chunk_text = " ".join(current_text).strip()
         if chunk_text:
             chunks.append((chunk_text, current_prakaran))
-    
     return chunks

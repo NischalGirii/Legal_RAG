@@ -1,17 +1,129 @@
 import re
-from collections import defaultdict
-from src.text_processor import char_ngram_tokenize, normalize_digits
+import json
+from collections import OrderedDict, defaultdict
+import numpy as np
+from src.config import CASE_INDEX_PATH, BM25_CANDIDATE_MULTIPLIER, VECTOR_CANDIDATE_CAP, QUERY_VEC_CACHE_SIZE
+from src.text_processor import char_ngram_tokenize, normalize_digits, clean_ocr_field
+
+_QUERY_VEC_CACHE = OrderedDict()
+
+
+def encode_query(model, query: str) -> list[float]:
+    cached = _QUERY_VEC_CACHE.get(query)
+    if cached is not None:
+        _QUERY_VEC_CACHE.move_to_end(query)
+        return cached
+    vector = model.encode([query], normalize_embeddings=True)[0].tolist()
+    _QUERY_VEC_CACHE[query] = vector
+    while len(_QUERY_VEC_CACHE) > QUERY_VEC_CACHE_SIZE:
+        _QUERY_VEC_CACHE.popitem(last=False)
+    return vector
+
+_CASE_INDEX = None
+_LOOKUP = {"n": -1, "id": None, "case": {}, "decision": {}, "headers": {}}
+
+
+def get_case_index():
+    global _CASE_INDEX
+    if _CASE_INDEX is None:
+        try:
+            with open(CASE_INDEX_PATH, "r", encoding="utf-8") as f:
+                _CASE_INDEX = json.load(f)
+        except Exception:
+            _CASE_INDEX = {}
+    return _CASE_INDEX
+
+
+def reset_lookup_indexes():
+    global _CASE_INDEX
+    _CASE_INDEX = None
+    _LOOKUP["n"] = -1
+    _LOOKUP["id"] = None
+    _LOOKUP["case"] = {}
+    _LOOKUP["decision"] = {}
+    _LOOKUP["headers"] = {}
+
+
+def get_lookup_indexes(chunk_metadata: list) -> dict:
+    """O(N) once per process (or when the corpus size changes)."""
+    n = len(chunk_metadata)
+    meta_id = id(chunk_metadata)
+    if _LOOKUP["n"] == n and _LOOKUP["id"] == meta_id:
+        return _LOOKUP
+
+    case_map = defaultdict(list)
+    decision_map = defaultdict(list)
+    headers = {}
+    for i, meta in enumerate(chunk_metadata):
+        cid = meta.get("case_id") or ""
+        if cid:
+            case_map[cid].append(i)
+            if meta.get("is_header"):
+                headers[cid] = i
+        dec = normalize_digits(str(meta.get("decision_no") or ""))
+        if dec:
+            decision_map[dec].append(i)
+
+    _LOOKUP["n"] = n
+    _LOOKUP["id"] = meta_id
+    _LOOKUP["case"] = dict(case_map)
+    _LOOKUP["decision"] = dict(decision_map)
+    _LOOKUP["headers"] = headers
+    return _LOOKUP
+
+
+def chunks_for_decision(chunk_metadata: list, decision_no: str, case_id: str | None = None) -> list:
+    lookups = get_lookup_indexes(chunk_metadata)
+    indices = []
+    if case_id:
+        indices = lookups["case"].get(case_id, [])
+    if not indices and decision_no:
+        indices = lookups["decision"].get(normalize_digits(str(decision_no)), [])
+    return [chunk_metadata[i] for i in indices]
+
+
+def _top_n_from_scores(scores, n: int, allowed_indices=None) -> list[int]:
+    if n <= 0:
+        return []
+    arr = np.asarray(scores, dtype=np.float64)
+    if allowed_indices is not None:
+        allowed = np.fromiter(allowed_indices, dtype=np.int64)
+        if allowed.size == 0:
+            return []
+        subset = arr[allowed]
+        k = min(n, allowed.size)
+        if k == allowed.size:
+            order = np.argsort(subset)[::-1]
+            return allowed[order].tolist()
+        part = np.argpartition(subset, -k)[-k:]
+        order = part[np.argsort(subset[part])[::-1]]
+        return allowed[order].tolist()
+
+    total = arr.size
+    if total == 0:
+        return []
+    k = min(n, total)
+    if k == total:
+        return np.argsort(arr)[::-1].tolist()
+    part = np.argpartition(arr, -k)[-k:]
+    return part[np.argsort(arr[part])[::-1]].tolist()
 
 SUMMARY_TERMS = [
-    "summary", "summarize", "what was this case about", "case about",
-    "सारांश", "सार", "मुद्दा के थियो", "मुद्दा के हो", "फैसला के थियो",
-    "यो मुद्दा", "के सम्बन्धी", "विस्तृत जानकारी"
+    "summary", "summarize", "सारांश", "विस्तृत जानकारी",
+    "संक्षिप्त विवरण", "पूरा विवरण", "detailed summary",
 ]
+ABOUT_TERMS = [
+    "के सम्बन्धी", "के बारे", "विषय के", "मुद्दाको प्रकार",
+    "what is this case about", "case about", "के हो यो मुद्दा",
+]
+PRINCIPLE_TERMS = ["कानूनी सिद्धान्त", "मुख्य सिद्धान्त", "ratio", "प्रतिपादन गरिएको"]
+COMPARISON_TERMS = ["compare", "comparison", "difference", "फरक", "तुलना", "दुवै मुद्दा", "यी दुई"]
 
 RELATIVE_PRONOUNS = ["यस", "उक्त", "त्यस", "यो", "this", "said", "above", "सो"]
 
 def detect_query_intent(query: str) -> str:
     q = (query or "").lower().strip()
+    normalized = normalize_digits(q)
     list_phrases = [
         "कुन कुन मुद्दा", "कुन-कुन मुद्दा", "कुन मुद्दा", "कस्ता मुद्दा",
         "मुद्दाको जानकारी", "के के मुद्दा", "कुन-कुन केस",
@@ -21,29 +133,54 @@ def detect_query_intent(query: str) -> str:
     ]
     if any(phrase in q for phrase in list_phrases):
         return "LIST_CASES"
-    if any(term in q for term in SUMMARY_TERMS):
+    numbers = re.findall(r"\b([0-9]{3,4})\b", normalized)
+    if any(term in q for term in COMPARISON_TERMS) or len(numbers) >= 2:
+        return "COMPARISON"
+    if any(term in q for term in PRINCIPLE_TERMS) or ("सिद्धान्त" in q and "कानून" in q):
+        return "LEGAL_PRINCIPLE"
+    if any(kw in q for kw in ["न्यायाधीश", "इजलास", "बेन्च"]):
+        return "FACTUAL"
+    if any(kw in q for kw in ["निवेदक", "पुनरावेदक", "विपक्षी", "प्रत्यर्थी", "पक्षकार", "कानून व्यवसायी", "अधिवक्ता"]):
+        return "FACTUAL"
+    if "मिति" in q or "कहिले" in q:
+        return "FACTUAL"
+    if ("अन्तिम" in q and "आदेश" in q) or "खारेज" in q or "सदर" in q:
+        return "FACTUAL"
+    if any(term in q for term in ABOUT_TERMS):
+        return "CASE_ABOUT"
+    if any(term in q for term in SUMMARY_TERMS) or "मुद्दा के थियो" in q or "फैसला के थियो" in q:
         return "CASE_SUMMARY"
+    if "pdf" in q or "source" in q or "कुन document" in q or "कुन कागजात" in q:
+        return "CASE_LOOKUP"
     if re.search(r"(?:निर्णय\s*नं\.?|decision\s*(?:no|number)|नं\.)\s*[०-९0-9]+", q, re.I):
         return "CASE_LOOKUP"
-    if re.search(r"nkp[_\s-]*[०-९0-9]+", q, re.I) or q.endswith(".pdf") or ".pdf" in q:
+    if re.search(r"nkp[_\s-]*[०-९0-9]+", q, re.I) or q.endswith(".pdf"):
         return "CASE_LOOKUP"
     if any(x in q for x in ["section", "दफा", "धारा", "कानून", "ऐन", "नियम"]):
         return "LEGAL_PROVISION"
-    if any(x in q for x in ["compare", "difference", "फरक", "तुलना"]):
-        return "COMPARISON"
     return "LEGAL_QA"
+
+
+def decision_exists(decision_no: str, chunk_metadata: list | None = None) -> bool:
+    dec = normalize_digits(str(decision_no or ""))
+    if not dec:
+        return False
+    if dec in get_case_index():
+        return True
+    if chunk_metadata is not None:
+        lookups = get_lookup_indexes(chunk_metadata)
+        return bool(lookups["decision"].get(dec))
+    return False
 
 def extract_query_identifiers(query: str, active_case_id: str = None) -> dict:
     q = query or ""
     normalized = normalize_digits(q)
     identifiers = {}
-    
-    # ---- 1. Explicit Nepali decision number patterns ----
+
     m = re.search(r"(?:निर्णय\s*नं\.?|decision\s*(?:no|number)|नं\.)\s*([0-9]{3,})", normalized, re.I)
     if m:
         identifiers["decision_no"] = m.group(1)
     else:
-        # Simpler: number after "निर्णय"
         m = re.search(r"निर्णय\s*([0-9]{3,})", normalized, re.I)
         if m:
             identifiers["decision_no"] = m.group(1)
@@ -52,7 +189,6 @@ def extract_query_identifiers(query: str, active_case_id: str = None) -> dict:
             if m:
                 identifiers["decision_no"] = m.group(1)
 
-    # ---- 2. English patterns ----
     if not identifiers.get("decision_no"):
         m = re.search(r"(?:case\s*(?:no|number)|cases\s*no)\s*[:. ]?\s*([0-9]{3,})", normalized, re.I)
         if m:
@@ -62,9 +198,7 @@ def extract_query_identifiers(query: str, active_case_id: str = None) -> dict:
         if m:
             identifiers["decision_no"] = m.group(1)
 
-    # ---- 3. Standalone number if the query is clearly about a case ----
     if not identifiers.get("decision_no"):
-        # Check if the query contains case-related keywords and a 3-4 digit number
         case_keywords = ["निर्णय", "मुद्दा", "फैसला", "case", "decision", "नं"]
         if any(kw in q.lower() for kw in case_keywords):
             standalone_numbers = re.findall(r"\b([0-9]{3,4})\b", normalized)
@@ -72,13 +206,11 @@ def extract_query_identifiers(query: str, active_case_id: str = None) -> dict:
                 identifiers["decision_no"] = standalone_numbers[0]
                 identifiers["_inferred_as_standalone"] = True
 
-    # ---- 4. Relative pronoun fallback ----
     if not identifiers.get("decision_no") and active_case_id:
         if any(pronoun in q.lower() for pronoun in RELATIVE_PRONOUNS):
             identifiers["decision_no"] = active_case_id.replace("decision_", "")
             identifiers["_inferred_from_context"] = True
 
-    # ---- Source patterns (for PDF filenames) ----
     m = re.search(r"(nkp[_\-][0-9]+(?:[_\-][0-9]+)?(?:[_\-]part[0-9]+)?\.pdf)", q, re.I)
     if m:
         identifiers["source"] = m.group(1)
@@ -86,6 +218,11 @@ def extract_query_identifiers(query: str, active_case_id: str = None) -> dict:
         m = re.search(r"(nkp[_\-][0-9]+(?:[_\-][0-9]+)?(?:[_\-]part[0-9]+)?)", q, re.I)
         if m:
             identifiers["source_stem"] = m.group(1)
+
+    numbers = re.findall(r"\b([0-9]{3,4})\b", normalized)
+    if len(numbers) >= 2:
+        identifiers["multiple_decision_nos"] = numbers
+
     return identifiers
 
 def _normalize_for_match(s: str) -> str:
@@ -110,244 +247,201 @@ def _lexical_score(query: str, text: str) -> float:
 def _case_key(meta: dict) -> str:
     return str(meta.get("case_id") or meta.get("decision_no") or meta.get("source") or "unknown")
 
-def perform_hybrid_search(query, collection, model, bm25, chunk_metadata, top_k=5, alpha=0.15, current_case=None):
-    """
-    Hybrid search with strict case filtering.
-    If current_case is provided, we restrict to that case.
-    """
-    intent = detect_query_intent(query)
-    # We need to extract identifiers here; but note that app.py already extracts them
-    # with active_case_id. We'll just use the query again (or accept identifiers as parameter).
-    # For simplicity, we'll re-extract, but we don't have active_case_id here.
-    # So we'll call without active_case_id (the caller should have already set current_case).
-    identifiers = extract_query_identifiers(query)
+def _as_bool(val) -> bool:
+    return val in (True, "True", "true", 1, "1")
+
+def _make_result(meta: dict, score: float, extra: dict = None) -> dict:
+    parties = meta.get("parties", {})
+    if isinstance(parties, dict):
+        parties = {k: clean_ocr_field(v) for k, v in parties.items()}
+    r = {
+        "score": score,
+        "vector_score": extra.get("vector_score", 0.0) if extra else 0.0,
+        "bm25_score": extra.get("bm25_score", 0.0) if extra else 0.0,
+        "lexical_score": extra.get("lexical_score", 0.0) if extra else 0.0,
+        "source": meta.get("source"),
+        "page": meta.get("page"),
+        "total_pages": meta.get("total_pages"),
+        "content": meta.get("content", ""),
+        "page_text": meta.get("page_text", meta.get("content", "")),
+        "decision_no": meta.get("decision_no", ""),
+        "date": clean_ocr_field(meta.get("date", "")),
+        "subject": clean_ocr_field(meta.get("subject", "")),
+        "case_id": meta.get("case_id", ""),
+        "parties": parties,
+        "case_type": clean_ocr_field(meta.get("case_type", "")),
+        "judges": clean_ocr_field(meta.get("judges", "")),
+        "appellant_lawyer": clean_ocr_field(meta.get("appellant_lawyer", "")),
+        "respondent_lawyer": clean_ocr_field(meta.get("respondent_lawyer", "")),
+        "provisions": clean_ocr_field(meta.get("provisions", "")),
+        "final_order": clean_ocr_field(meta.get("final_order", "")),
+        "legal_principle": clean_ocr_field(meta.get("legal_principle", "")),
+        "precedents": clean_ocr_field(meta.get("precedents", "")),
+        "prakaran_no": meta.get("prakaran_no"),
+        "is_header": _as_bool(meta.get("is_header", False)),
+    }
+    return r
+
+def perform_hybrid_search(query, collection, model, bm25, chunk_metadata, top_k=5, alpha=0.15, current_case=None, identifiers=None):
+    if identifiers is None:
+        identifiers = extract_query_identifiers(query)
+
     total = len(chunk_metadata)
     if total == 0:
         return []
 
-    # ---- RESTRICT TO CURRENT CASE ----
-    candidate_indices = list(range(total))
-    if current_case:
-        case_id = current_case.get("case_id")
-        if case_id:
-            filtered = [i for i, m in enumerate(chunk_metadata) if m.get("case_id") == case_id]
-            if filtered:
-                candidate_indices = filtered
-                # If we have a current case, we can also set the decision_no if not present
-                if not identifiers.get("decision_no"):
-                    # Extract from case_id
-                    if case_id.startswith("decision_"):
-                        identifiers["decision_no"] = case_id.replace("decision_", "")
-            else:
-                # No chunks for this case – return empty
-                return []
+    intent = detect_query_intent(query)
 
-    # ---- If explicit decision_no is present, filter strictly ----
+    target_case_id = None
+    target_decision_no = None
+
+    if identifiers.get("multiple_decision_nos") and len(identifiers["multiple_decision_nos"]) >= 2:
+        pass
+
+    lookups = get_lookup_indexes(chunk_metadata)
+    candidate_set = None
+
     if identifiers.get("decision_no"):
-        target = identifiers["decision_no"]
-        filtered = []
-        for i, m in enumerate(chunk_metadata):
-            m_no = normalize_digits(str(m.get("decision_no", "")))
-            if m_no == target:
-                filtered.append(i)
-        if filtered:
-            candidate_indices = filtered
+        target_decision_no = identifiers["decision_no"]
+        case_index = get_case_index()
+        case_info = case_index.get(target_decision_no)
+        if case_info:
+            target_case_id = case_info["case_id"]
         else:
-            # Try by case_id
-            case_id = f"decision_{target}"
-            filtered = [i for i, m in enumerate(chunk_metadata) if m.get("case_id") == case_id]
-            if filtered:
-                candidate_indices = filtered
-            else:
-                return []
+            dec_hits = lookups["decision"].get(target_decision_no, [])
+            if dec_hits:
+                target_case_id = chunk_metadata[dec_hits[0]].get("case_id")
 
-    # ---- For summary/lookup, return all chunks for the case ----
-    if intent in ("CASE_SUMMARY", "CASE_LOOKUP"):
-        all_case_chunks = []
-        for idx, meta in enumerate(chunk_metadata):
-            if idx in candidate_indices:
-                all_case_chunks.append((idx, meta))
-        all_case_chunks.sort(key=lambda x: (x[1].get("page", 0), x[1].get("index", 0)))
+    if current_case and current_case.get("case_id"):
+        target_case_id = current_case["case_id"]
+        if not identifiers.get("decision_no"):
+            if target_case_id.startswith("decision_"):
+                target_decision_no = target_case_id.replace("decision_", "")
+
+    if target_case_id and target_case_id in lookups["case"]:
+        candidate_indices = lookups["case"][target_case_id]
+        candidate_set = set(candidate_indices)
+    else:
+        candidate_indices = None
+        candidate_set = None
+
+    if intent in ("CASE_SUMMARY", "CASE_LOOKUP", "CASE_ABOUT", "LEGAL_PRINCIPLE", "FACTUAL") and candidate_indices:
+        header_idx = lookups["headers"].get(target_case_id)
+        content_indices = [i for i in candidate_indices if i != header_idx][:5]
+        result_indices = ([header_idx] if header_idx is not None else []) + content_indices
         results = []
-        for idx, meta in all_case_chunks[:50]:
-            results.append({
-                "index": idx,
-                "score": 1.0,
-                "vector_score": 1.0,
-                "bm25_score": 1.0,
-                "lexical_score": 1.0,
-                "source": meta.get("source"),
-                "page": meta.get("page"),
-                "total_pages": meta.get("total_pages"),
-                "content": meta.get("content", ""),
-                "page_text": meta.get("page_text", meta.get("content", "")),
-                "decision_no": meta.get("decision_no", ""),
-                "date": meta.get("date", ""),
-                "subject": meta.get("subject", ""),
-                "case_id": meta.get("case_id", ""),
-                "parties": meta.get("parties", {}),
-                "case_type": meta.get("case_type", ""),
-                "judges": meta.get("judges", ""),
-                "appellant_lawyer": meta.get("appellant_lawyer", ""),
-                "respondent_lawyer": meta.get("respondent_lawyer", ""),
-                "provisions": meta.get("provisions", ""),
-                "prakaran_no": meta.get("prakaran_no"),
-                "is_header": meta.get("is_header", False),
-            })
-        results.sort(key=lambda x: (x.get("is_header", False), x.get("page", 999)), reverse=True)
+        for idx in result_indices:
+            meta = chunk_metadata[idx]
+            r = _make_result(meta, 1.0, {"vector_score": 1.0, "bm25_score": 1.0, "lexical_score": 1.0})
+            r["index"] = idx
+            results.append(r)
         return results
 
-    # ---- Normal hybrid search on candidate_indices ----
-    search_n = min(max(top_k * 8, 20), len(candidate_indices))
-    vector = model.encode([query], normalize_embeddings=True)[0].tolist()
-    vec_res = collection.query(
-        query_embeddings=[vector],
-        n_results=min(search_n * 3, 100),
-        include=["distances", "metadatas", "documents"]
-    )
+    search_n = min(max(top_k * BM25_CANDIDATE_MULTIPLIER, 20), total if candidate_indices is None else len(candidate_indices))
+    vector = encode_query(model, query)
+
+    corpus_size = collection.count()
+    safe_n = max(1, min(search_n * 3, VECTOR_CANDIDATE_CAP, corpus_size))
+    query_kwargs = {
+        "query_embeddings": [vector],
+        "n_results": safe_n,
+        "include": ["distances", "metadatas"],
+    }
+    if target_case_id:
+        query_kwargs["where"] = {"case_id": target_case_id}
+
+    try:
+        vec_res = collection.query(**query_kwargs)
+    except Exception:
+        query_kwargs.pop("where", None)
+        vec_res = collection.query(**query_kwargs)
 
     vec_scores = {}
     if vec_res.get("ids"):
-        for idx_id, dist, meta, doc in zip(
-            vec_res["ids"][0], vec_res["distances"][0], vec_res["metadatas"][0], vec_res["documents"][0]
+        for idx_id, dist, meta in zip(
+            vec_res["ids"][0], vec_res["distances"][0], vec_res["metadatas"][0]
         ):
-            try:
-                idx = int(idx_id.replace("doc_chunk_", ""))
-            except Exception:
+            idx = meta.get("chunk_index")
+            if idx is None:
+                try:
+                    idx = int(str(idx_id).replace("doc_chunk_", ""))
+                except Exception:
+                    continue
+            else:
+                idx = int(idx)
+            if candidate_set is not None and idx not in candidate_set:
                 continue
-            if idx not in candidate_indices:
-                continue
-            vec_scores[idx] = 1.0 / (1.0 + float(dist))
+            if 0 <= idx < total:
+                vec_scores[idx] = 1.0 / (1.0 + float(dist))
 
-    bm25_scores_raw = bm25.get_scores(char_ngram_tokenize(query))
-    candidate_scores = {i: bm25_scores_raw[i] for i in candidate_indices}
-    max_bm25 = max(candidate_scores.values()) if candidate_scores else 1.0
+    query_tokens = char_ngram_tokenize(query)
+    if hasattr(bm25, "search"):
+        bm25_top, sparse_scores = bm25.search(query_tokens, top_k=search_n, allowed_indices=candidate_indices)
+        union = set(vec_scores) | set(bm25_top)
+        if target_case_id:
+            header_idx = lookups["headers"].get(target_case_id)
+            if header_idx is not None:
+                union.add(header_idx)
+        missing = [i for i in union if i not in sparse_scores]
+        if missing:
+            sparse_scores.update(bm25.score_docs(query_tokens, missing))
+        bm25_for_doc = sparse_scores
+    else:
+        bm25_scores_raw = bm25.get_scores(query_tokens)
+        bm25_top = _top_n_from_scores(bm25_scores_raw, search_n, candidate_indices)
+        bm25_for_doc = {i: float(bm25_scores_raw[i]) for i in bm25_top}
+        union = set(vec_scores) | set(bm25_top)
+        if target_case_id:
+            header_idx = lookups["headers"].get(target_case_id)
+            if header_idx is not None:
+                union.add(header_idx)
+        for i in union:
+            if i not in bm25_for_doc:
+                bm25_for_doc[i] = float(bm25_scores_raw[i])
+
+    max_bm25 = max(bm25_for_doc.values()) if bm25_for_doc else 1.0
     if max_bm25 <= 0:
         max_bm25 = 1.0
 
     results = []
-    union = set(vec_scores) | set(candidate_scores.keys())
     for i in union:
         meta = chunk_metadata[i]
         vector_score = vec_scores.get(i, 0.0)
-        bm_score = max(0.0, candidate_scores.get(i, 0.0)) / max_bm25
+        bm_score = max(0.0, float(bm25_for_doc.get(i, 0.0))) / max_bm25
         lexical = _lexical_score(query, meta.get("content", ""))
         fused = alpha * vector_score + (1 - alpha) * bm_score
         fused += 0.20 * lexical
-        if intent in ("CASE_SUMMARY", "CASE_LOOKUP") and meta.get("is_header", False):
+        if _as_bool(meta.get("is_header", False)):
             fused += 2.0
 
-        results.append({
-            "index": i,
-            "score": fused,
-            "vector_score": vector_score,
-            "bm25_score": bm_score,
-            "lexical_score": lexical,
-            "source": meta.get("source"),
-            "page": meta.get("page"),
-            "total_pages": meta.get("total_pages"),
-            "content": meta.get("content", ""),
-            "page_text": meta.get("page_text", meta.get("content", "")),
-            "decision_no": meta.get("decision_no", ""),
-            "date": meta.get("date", ""),
-            "subject": meta.get("subject", ""),
-            "case_id": meta.get("case_id", ""),
-            "parties": meta.get("parties", {}),
-            "case_type": meta.get("case_type", ""),
-            "judges": meta.get("judges", ""),
-            "appellant_lawyer": meta.get("appellant_lawyer", ""),
-            "respondent_lawyer": meta.get("respondent_lawyer", ""),
-            "provisions": meta.get("provisions", ""),
-            "prakaran_no": meta.get("prakaran_no"),
-            "is_header": meta.get("is_header", False),
-        })
+        r = _make_result(meta, fused, {"vector_score": vector_score, "bm25_score": bm_score, "lexical_score": lexical})
+        r["index"] = i
+        results.append(r)
 
     results.sort(key=lambda x: x["score"], reverse=True)
 
-    # ---- Dominant case inference (only if no current_case and no decision_no) ----
-    if not current_case and not identifiers.get("decision_no") and intent != "LIST_CASES":
-        top_case_counter = defaultdict(int)
-        for res in results[:max(top_k, 10)]:
-            case_id = res.get("case_id")
-            if case_id:
-                top_case_counter[case_id] += 1
-        if top_case_counter:
-            dominant_case = max(top_case_counter, key=top_case_counter.get)
-            if top_case_counter[dominant_case] >= max(top_k, 10) / 2:
-                filtered_results = [r for r in results if r.get("case_id") == dominant_case]
-                if filtered_results:
-                    return filtered_results[:top_k]
+    expanded = []
+    seen_indices = set()
+    for res in results[:top_k]:
+        idx = res["index"]
+        if idx not in seen_indices:
+            expanded.append(res)
+            seen_indices.add(idx)
+        neighbour_score = res["score"] * 0.8
+        neighbour_extra = {
+            "vector_score": res["vector_score"] * 0.8,
+            "bm25_score": res["bm25_score"] * 0.8,
+            "lexical_score": res["lexical_score"] * 0.8,
+        }
+        for neighbour_idx in (idx - 1, idx + 1):
+            if neighbour_idx < 0 or neighbour_idx >= total or neighbour_idx in seen_indices:
+                continue
+            neighbour_meta = chunk_metadata[neighbour_idx]
+            if neighbour_meta.get("case_id") == res["case_id"]:
+                nr = _make_result(neighbour_meta, neighbour_score, neighbour_extra)
+                nr["index"] = neighbour_idx
+                expanded.append(nr)
+                seen_indices.add(neighbour_idx)
 
-    # ---- Neighbouring chunk expansion ----
-    if intent not in ("CASE_SUMMARY", "CASE_LOOKUP", "LIST_CASES"):
-        expanded = []
-        seen_indices = set()
-        for res in results[:top_k]:
-            idx = res["index"]
-            if idx not in seen_indices:
-                expanded.append(res)
-                seen_indices.add(idx)
-            prev_idx = idx - 1
-            if prev_idx >= 0 and prev_idx not in seen_indices:
-                prev_meta = chunk_metadata[prev_idx]
-                if prev_meta.get("case_id") == res["case_id"]:
-                    prev_res = {
-                        "index": prev_idx,
-                        "score": res["score"] * 0.8,
-                        "vector_score": res["vector_score"] * 0.8,
-                        "bm25_score": res["bm25_score"] * 0.8,
-                        "lexical_score": res["lexical_score"] * 0.8,
-                        "source": prev_meta.get("source"),
-                        "page": prev_meta.get("page"),
-                        "total_pages": prev_meta.get("total_pages"),
-                        "content": prev_meta.get("content", ""),
-                        "page_text": prev_meta.get("page_text", prev_meta.get("content", "")),
-                        "decision_no": prev_meta.get("decision_no", ""),
-                        "date": prev_meta.get("date", ""),
-                        "subject": prev_meta.get("subject", ""),
-                        "case_id": prev_meta.get("case_id", ""),
-                        "parties": prev_meta.get("parties", {}),
-                        "case_type": prev_meta.get("case_type", ""),
-                        "judges": prev_meta.get("judges", ""),
-                        "appellant_lawyer": prev_meta.get("appellant_lawyer", ""),
-                        "respondent_lawyer": prev_meta.get("respondent_lawyer", ""),
-                        "provisions": prev_meta.get("provisions", ""),
-                        "prakaran_no": prev_meta.get("prakaran_no"),
-                        "is_header": prev_meta.get("is_header", False),
-                    }
-                    expanded.append(prev_res)
-                    seen_indices.add(prev_idx)
-            next_idx = idx + 1
-            if next_idx < total and next_idx not in seen_indices:
-                next_meta = chunk_metadata[next_idx]
-                if next_meta.get("case_id") == res["case_id"]:
-                    next_res = {
-                        "index": next_idx,
-                        "score": res["score"] * 0.8,
-                        "vector_score": res["vector_score"] * 0.8,
-                        "bm25_score": res["bm25_score"] * 0.8,
-                        "lexical_score": res["lexical_score"] * 0.8,
-                        "source": next_meta.get("source"),
-                        "page": next_meta.get("page"),
-                        "total_pages": next_meta.get("total_pages"),
-                        "content": next_meta.get("content", ""),
-                        "page_text": next_meta.get("page_text", next_meta.get("content", "")),
-                        "decision_no": next_meta.get("decision_no", ""),
-                        "date": next_meta.get("date", ""),
-                        "subject": next_meta.get("subject", ""),
-                        "case_id": next_meta.get("case_id", ""),
-                        "parties": next_meta.get("parties", {}),
-                        "case_type": next_meta.get("case_type", ""),
-                        "judges": next_meta.get("judges", ""),
-                        "appellant_lawyer": next_meta.get("appellant_lawyer", ""),
-                        "respondent_lawyer": next_meta.get("respondent_lawyer", ""),
-                        "provisions": next_meta.get("provisions", ""),
-                        "prakaran_no": next_meta.get("prakaran_no"),
-                        "is_header": next_meta.get("is_header", False),
-                    }
-                    expanded.append(next_res)
-                    seen_indices.add(next_idx)
-        expanded.sort(key=lambda x: x["score"], reverse=True)
-        return expanded[:top_k * 3]
-
-    return results[:top_k if not (identifiers.get("decision_no") and intent in {"CASE_SUMMARY", "CASE_LOOKUP"}) else min(30, max(top_k, 10))]
+    expanded.sort(key=lambda x: x["score"], reverse=True)
+    return expanded[:top_k]
