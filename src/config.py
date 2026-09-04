@@ -17,6 +17,13 @@ CASE_INDEX_PATH = os.path.join(MODELS_DIR, "case_index.json")
 INGEST_METADATA_PATH = os.path.join(MODELS_DIR, "ingest_metadata.json")
 CASE_SUMMARIES_PATH = os.path.join(MODELS_DIR, "case_summaries.json")
 
+# Voice & Live Model Settings
+VOICE_LIVE = os.environ.get("VOICE_LIVE", "on").lower() in ("on", "true", "1")
+VOICE_LANGUAGE = os.environ.get("VOICE_LANGUAGE", "ne-NP")
+GEMINI_VOICE = os.environ.get("GEMINI_VOICE", "Kore")
+GEMINI_LIVE_MODEL = os.environ.get("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview").replace("models/", "")
+GEMINI_STT_MODEL = os.environ.get("GEMINI_STT_MODEL", "gemini-3.5-transcribe").replace("models/", "")
+
 EMBED_BATCH_SIZE = int(os.environ.get("EMBED_BATCH_SIZE", "64"))
 CHROMA_UPSERT_BATCH = int(os.environ.get("CHROMA_UPSERT_BATCH", "500"))
 BM25_CANDIDATE_MULTIPLIER = int(os.environ.get("BM25_CANDIDATE_MULTIPLIER", "8"))
@@ -28,7 +35,6 @@ METADATA_LLM_MODEL = os.environ.get("METADATA_LLM_MODEL", "llama3-8b-8192")
 CHUNK_DOCS_PATH = os.path.join(MODELS_DIR, "chunk_docs.jsonl")
 INGEST_WORKERS = int(os.environ.get("INGEST_WORKERS", "4"))
 QUERY_VEC_CACHE_SIZE = int(os.environ.get("QUERY_VEC_CACHE_SIZE", "256"))
-
 
 def ensure_models_dir() -> str:
     os.makedirs(MODELS_DIR, exist_ok=True)

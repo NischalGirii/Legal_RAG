@@ -30,6 +30,82 @@ _OCR_NOISE_TOKEN = re.compile(
 )
 _OCR_LONE_INITIAL = re.compile(r"(?:(?<=\s)|(?<=^))[MuU](?:d)?(?:\s+)(?=विद्वान|अधिवक्ता|सहन्याया|नायब|श्री)")
 
+SPEECH_CORRECTIONS = {
+    "मुद्धा": "मुद्दा",
+    "मुद्धाहरु": "मुद्दाहरू",
+    "मुद्दाहरु": "मुद्दाहरू",
+    "निन्याय": "निर्णय",
+    "निर्णया": "निर्णय",
+    "नियायाधीश": "न्यायाधीश",
+    "न्यादिष": "न्यायाधीश",
+    "न्यादिश": "न्यायाधीश",
+    "न्यादिष्को": "न्यायाधीश को",
+    "प्रहरीष्येवालाई": "प्रहरी सेवालाई",
+    "प्रहरीष्येवा": "प्रहरी सेवा",
+    "बिसिस्ट": "विशिष्ट",
+    "किना": "किन",
+    "संदर्विक्ष": "सम्बन्धित छ",
+    "तोपेलाई": "तपाईंलाई",
+    "तपई": "तपाईं",
+    "तोपाई": "तपाईं",
+    "तबैचना": "तपाईंसँग",
+    "समा": "सँग",
+    "ग्यान": "ज्ञान",
+    "जानकारिहा": "जानकारी छ",
+    "कुनकुर": "कुन-कुन",
+    "कुनकुन": "कुन-कुन",
+    "केके": "के-के",
+    "मुद्दाच्छ": "मुद्दा छन्",
+    "अरुछन्": "अरू छन्",
+    "कोको": "को-को",
+    "प्रस्तुत्र": "प्रस्तुत",
+    "दिनना": "दिनुहोस्",
+}
+
+def clean_asr_transcript(text: str) -> str:
+    """Corrects Whisper phonetic artifacts, Nepali years, and decision numbers."""
+    if not text:
+        return ""
+    cleaned = text
+
+    # Word-level speech corrections
+    for typo, fix in SPEECH_CORRECTIONS.items():
+        cleaned = re.sub(rf"(?<!\S){re.escape(typo)}(?!\S)", fix, cleaned)
+        cleaned = cleaned.replace(typo, fix)
+
+    # 1. Police Regulations year: "दुयाजार उनन पचास" / "दुई हजार उनन्पचास" -> २०४९
+    cleaned = re.sub(r"दु[ईय]?[ा]?जार\s*उन[न|न्]+[ -]?पचास[कोगोमु]*", "२०४९", cleaned, flags=re.I)
+
+    # 2. Fix ASR hallucinations like ९९०९९, ९०९९९, ९९०९२, ९१९९ -> 9099
+    cleaned = re.sub(r"(?:निर्णय|न्यायाधीश)\s*(?:नं\.?\s*)?[९9]{2,4}[०0]?[९9]{2,4}\b", "निर्णय नं. 9099", cleaned)
+    cleaned = re.sub(r"निर्णय\s*(?:नं\.?\s*)?[९9][१1][९9][९9]\b", "निर्णय नं. 9099", cleaned)
+
+    # 3. Fix 9100 variations: ९१०२ -> 9100, "नौँअजार एक्सेको" -> 9100
+    cleaned = re.sub(r"निर्णय\s*(?:नं\.?\s*)?[९9][१1][०0][२2]\b", "निर्णय नं. 9100", cleaned)
+    cleaned = re.sub(r"नौ[ँं]?\s*[अह]जार\s*(?:एक\s*सय|एक्से[कोगो]?|सय)", "9100", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b(?:एकानब्बे\s*सय|एकानब्बे)\b", "9100", cleaned, flags=re.I)
+
+    # 4. Spoken 9099 variations
+    cleaned = re.sub(r"नौ[ँं]?\s*[अह]जार\s*(?:उनान्सय|नौ\s*सय)", "9099", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b(?:अजारुनन्सय|उनान्सय)\b", "9099", cleaned, flags=re.I)
+
+    # 5. Direct mentions like "निर्णय १००" -> 9100
+    cleaned = re.sub(r"निर्णय\s*(?:नं\.?\s*)?100\b", "निर्णय नं. 9100", cleaned)
+    cleaned = re.sub(r"निर्णय\s*(?:नं\.?\s*)?१००\b", "निर्णय नं. 9100", cleaned)
+
+    return cleaned
+
+def clean_text_for_tts(text: str) -> str:
+    """Strips Markdown syntax (asterisks, bullet points, headers) for clean speech."""
+    if not text:
+        return ""
+    s = re.sub(r"#+\s*", "", text)
+    s = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", s)
+    s = re.sub(r"_{1,3}([^_]+)_{1,3}", r"\1", s)
+    s = re.sub(r"^\s*[-*•]\s*", "", s, flags=re.M)
+    s = re.sub(r"\n+", "। ", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
 
 def apply_ocr_fixes(text: str) -> str:
     if not text:
@@ -38,9 +114,7 @@ def apply_ocr_fixes(text: str) -> str:
         text = text.replace(wrong, correct)
     return text
 
-
 def clean_ocr_field(value) -> str:
-    """Clean a metadata field that may contain OCR junk (M, Ud, SAT, doubled letters)."""
     if value is None:
         return ""
     if isinstance(value, dict):

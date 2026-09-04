@@ -22,3 +22,6 @@ torchaudio
 
 groq
 python-dotenv
+
+fastapi
+uvicorn

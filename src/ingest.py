@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import pickle
 import json
@@ -6,6 +7,10 @@ import datetime
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
+
+# Add project root to sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import fitz
 import chromadb
 from sentence_transformers import SentenceTransformer
