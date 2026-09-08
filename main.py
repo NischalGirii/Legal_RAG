@@ -77,7 +77,8 @@ except Exception as e:
 cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 session_cases: Dict[str, dict] = {}
 
-# ---- Load Global Case Metadata for LIST_CASES ----
+# ---- Load global case metadata at startup so LIST_CASES / decision-existence
+#      checks always have the full picture instead of relying on None. ----
 METADATA_INFO = None
 if os.path.exists(CASE_INDEX_PATH):
     try:
@@ -104,14 +105,16 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+    session_id: str
 
 class TranscribeResponse(BaseModel):
     transcript: str
 
 def build_current_case(case_id: Optional[str], decision_no: Optional[str]) -> Optional[dict]:
-    dec = snap_decision_number(decision_no or (case_id.replace("decision_", "") if case_id else None))
-    if dec:
-        return {"case_id": f"decision_{dec}", "decision_no": dec}
+    if case_id:
+        return {"case_id": case_id, "decision_no": decision_no or case_id.replace("decision_", "")}
+    if decision_no:
+        return {"case_id": f"decision_{decision_no}", "decision_no": decision_no}
     return None
 
 def infer_case_from_keywords(query: str) -> Optional[dict]:
@@ -129,12 +132,12 @@ def infer_case_from_keywords(query: str) -> Optional[dict]:
 @app.get("/api/config")
 async def get_config():
     return {
-        "voice_live": False,
+        "voice_live": False,  # Uses the robust multi-turn VAD pipeline
         "voice_language": VOICE_LANGUAGE,
         "stt_model": GEMINI_STT_MODEL,
     }
 
-# ---- Native Neural Nepali TTS ----
+# ---- Native Neural Nepali TTS (Strips Markdown for Natural Speech) ----
 @app.get("/api/tts")
 async def text_to_speech(text: str):
     if not text or not text.strip():
@@ -160,9 +163,19 @@ async def chat(request: ChatRequest):
     try:
         raw_query = clean_asr_transcript(request.message)
         query = clean_devanagari_text(raw_query)
+        # The frontend must persist and resend this session_id on every
+        # subsequent request (see ChatResponse.session_id below) — otherwise
+        # a fresh uuid is minted each turn and session_cases (sticky case
+        # tracking) never actually persists across the conversation.
         sess_id = request.session_id or str(uuid.uuid4())
 
-        identifiers = extract_query_identifiers(query)
+        # Pass the sticky case's case_id so extract_query_identifiers' own
+        # pronoun-resolution ("यो", "उक्त", "सो", ...) can actually fire —
+        # previously this parameter was never supplied, so that logic was
+        # dead code and pronoun references silently fell through to the
+        # unconditional session_cases fallback instead.
+        active_case_id = (session_cases.get(sess_id) or {}).get("case_id")
+        identifiers = extract_query_identifiers(query, active_case_id=active_case_id)
         intent = detect_query_intent(query)
 
         # 1. Multi-case comparison check
@@ -178,22 +191,106 @@ async def chat(request: ChatRequest):
                 bm25=bm25,
             )
             if comparison_reply:
-                return ChatResponse(reply=comparison_reply)
+                return ChatResponse(reply=comparison_reply, session_id=sess_id)
 
-        # 2. Dynamic Case Resolution (Bypasses sticky session for global queries)
-        if intent in ("LIST_CASES", "COMPARISON", "GREETING"):
+        # 2. Resolve the requested decision number, if any, with ASR/typo
+        #    tolerance: snap a near-miss like "91099" -> "9099" instead of
+        #    bluntly rejecting it (this is exactly the "audio mis-hears the
+        #    number" problem — see snap_decision_number's edit-distance
+        #    tolerance in hybrid_search.py).
+        requested_dec = identifiers.get("decision_no")
+        requested_dec_is_explicit = bool(requested_dec) and not identifiers.get("_inferred_as_standalone")
+        if requested_dec:
+            requested_dec = snap_decision_number(requested_dec, chunk_metadata)
+
+        # Only reject immediately for an EXPLICIT, high-confidence reference
+        # (a literal "निर्णय नं. XXXX" pattern) that still doesn't exist
+        # after snapping. A WEAKLY inferred number (extract_query_identifiers'
+        # fallback: "any case-keyword nearby + exactly one bare number") is
+        # not reliable enough to short-circuit on its own — e.g. "प्रहरी सेवा
+        # २०४९ ... फैसला" contains "२०४९", the *regulation year*, not a
+        # decision number, and infer_case_from_keywords below correctly
+        # resolves that query to a real case (9099) via the word "प्रहरी".
+        # Rejecting on the weak number guess alone, before keyword inference
+        # gets a chance, previously broke that working case entirely.
+        if (
+            requested_dec_is_explicit
+            and intent not in ("LIST_CASES", "COMPARISON")
+            and not decision_exists(requested_dec, chunk_metadata)
+        ):
+            available = []
+            if METADATA_INFO and METADATA_INFO.get("case_metadata"):
+                available = sorted(set(
+                    str(info.get("decision_no"))
+                    for info in METADATA_INFO["case_metadata"].values()
+                    if info.get("decision_no")
+                ))
+            extra = f" उपलब्ध निर्णय नं.: {', '.join(available)}।" if available else ""
+            return ChatResponse(
+                reply=f"निर्णय नं. {requested_dec} यस ज्ञानकोषमा अनुक्रमित छैन।{extra}",
+                session_id=sess_id,
+            )
+
+        # 3. Bypass sticky session lock for genuinely global queries.
+        #    - LIST_CASES / COMPARISON: explicit "list/compare everything" intent.
+        #    - LEGAL_PROVISION: "X ऐन/धारा भनेको के हो?" is a general-law
+        #      question, not a question about whatever case was last
+        #      discussed — silently scoping it to the sticky case only
+        #      produces a false "not found" for content that may not even
+        #      relate to that case.
+        #    - CROSS_CASE_CUES: explicit "among your decisions..." survey
+        #      questions must search everything, not just the sticky case.
+        #      Without this, such a question was observed to get scoped to
+        #      whichever single case was last discussed, and the LLM then
+        #      produced a plausible-sounding but factually wrong answer
+        #      about *that* case instead of correctly identifying a
+        #      different, actually-matching case elsewhere in the corpus.
+        CROSS_CASE_CUES = ["मध्ये", "सबै निर्णयमा", "सबैमा", "कुन निर्णयमा", "कुनकुन निर्णयमा"]
+        if intent in ("LIST_CASES", "COMPARISON") or intent == "LEGAL_PROVISION" or any(cue in query for cue in CROSS_CASE_CUES):
             current_case = None
         else:
+            # Resolve the *real* case_id from METADATA_INFO rather than
+            # assuming "decision_{no}" — ingest.py only uses that convention
+            # when it successfully read the decision number off the PDF;
+            # otherwise it falls back to a "file_<name>" case_id, and
+            # guessing wrong here silently breaks the Chroma `where` filter
+            # downstream (perform_hybrid_search's decision-number fallback
+            # covers this too, but resolving it correctly at the source is
+            # cheaper and keeps session_cases accurate for later turns).
             query_case = None
-            if identifiers.get("decision_no"):
-                dec = identifiers["decision_no"]
-                if decision_exists(dec, chunk_metadata):
-                    query_case = {"case_id": f"decision_{dec}", "decision_no": dec}
+            if requested_dec and decision_exists(requested_dec, chunk_metadata):
+                case_info = (METADATA_INFO or {}).get("case_metadata", {}).get(requested_dec)
+                real_case_id = case_info.get("case_id") if case_info else None
+                query_case = {
+                    "case_id": real_case_id or f"decision_{requested_dec}",
+                    "decision_no": requested_dec,
+                }
 
             if query_case is None:
                 query_case = infer_case_from_keywords(query)
 
-            # If user asks about a new case, override the session context
+            # A weakly-inferred number that matched neither a real decision
+            # nor any keyword-based case: now it's safe to tell the user
+            # it isn't indexed, since we gave keyword inference a fair shot.
+            if query_case is None and requested_dec and not requested_dec_is_explicit:
+                available = []
+                if METADATA_INFO and METADATA_INFO.get("case_metadata"):
+                    available = sorted(set(
+                        str(info.get("decision_no"))
+                        for info in METADATA_INFO["case_metadata"].values()
+                        if info.get("decision_no")
+                    ))
+                extra = f" उपलब्ध निर्णय नं.: {', '.join(available)}।" if available else ""
+                return ChatResponse(
+                    reply=f"निर्णय नं. {requested_dec} यस ज्ञानकोषमा अनुक्रमित छैन।{extra}",
+                    session_id=sess_id,
+                )
+
+            if query_case is None and identifiers.get("_inferred_from_context") and active_case_id:
+                # Explicit pronoun reference ("यो", "उक्त", "सो", ...) back
+                # to the case already being discussed.
+                query_case = session_cases.get(sess_id)
+
             if query_case:
                 current_case = query_case
                 session_cases[sess_id] = query_case
@@ -202,7 +299,7 @@ async def chat(request: ChatRequest):
                 if current_case is None and sess_id in session_cases:
                     current_case = session_cases[sess_id]
 
-        # 3. Hybrid search
+        # 3. First hybrid search attempt (scoped to current_case if applicable)
         results = perform_hybrid_search(
             query=query,
             collection=collection,
@@ -215,9 +312,10 @@ async def chat(request: ChatRequest):
             identifiers=identifiers,
         )
 
-        # 4. Unscoped fallback retry if scoped search yielded zero results
+        # 4. Unscoped fallback retry if scoped search yielded zero results —
+        #    prevents a wrong/eager case-lock from silently producing "no info".
         if not results and current_case:
-            print(f"🔄 Scoped search in {current_case.get('case_id')} empty. Retrying unscoped search...")
+            print(f"🔄 Scoped search in {current_case.get('case_id')} empty. Retrying unscoped search across entire corpus...")
             results = perform_hybrid_search(
                 query=query,
                 collection=collection,
@@ -239,7 +337,7 @@ async def chat(request: ChatRequest):
             results.sort(key=lambda x: x["score"], reverse=True)
             results = results[:5]
 
-        # 6. Pass real METADATA_INFO to answer generator
+        # 6. Pass real METADATA_INFO and chunk_metadata through.
         answer = generate_nepali_answer(
             query=query,
             retrieved_items=results,
@@ -249,13 +347,15 @@ async def chat(request: ChatRequest):
             comparison_mode=False,
             detected_numbers=None,
             stream=False,
+            chunk_metadata=chunk_metadata,
         )
 
         if hasattr(answer, "__iter__") and not isinstance(answer, str):
             full = "".join(chunk.choices[0].delta.content or "" for chunk in answer if hasattr(chunk, "choices") and chunk.choices)
             answer = full
 
-        return ChatResponse(reply=str(answer) if answer else "क्षमा गर्नुहोस्, उत्तर उत्पन्न गर्न सकिएन।")
+        reply_text = str(answer) if answer else "क्षमा गर्नुहोस्, उत्तर उत्पन्न गर्न सकिएन।"
+        return ChatResponse(reply=reply_text, session_id=sess_id)
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -274,7 +374,9 @@ async def transcribe_audio(audio: UploadFile = File(...)):
 
         print(f"[Transcribe] Processing {len(audio_bytes)} bytes ({clean_mime})...")
 
-        # 1. Gemini STT with candidate part inspection
+        # 1. Gemini STT — force text-only output and inspect all part types,
+        #    since some responses return only an `audio_transcription` part
+        #    rather than a plain `text` part (response.text alone can miss it).
         if client:
             try:
                 response = client.models.generate_content(
@@ -283,6 +385,10 @@ async def transcribe_audio(audio: UploadFile = File(...)):
                         types.Part.from_bytes(data=audio_bytes, mime_type=clean_mime),
                         "यो अडियोलाई शुद्ध नेपालीमा ट्रान्सक्राइब गर्नुहोस्। निर्णय नं. ९०९९ वा ९१०० जस्ता अंक प्रष्ट लेख्नुहोस्।",
                     ],
+                    config=types.GenerateContentConfig(
+                        response_modalities=["TEXT"],
+                        temperature=0,
+                    ),
                 )
                 raw_text = (response.text or "").strip()
                 if not raw_text and response.candidates:
@@ -298,6 +404,8 @@ async def transcribe_audio(audio: UploadFile = File(...)):
                     transcript = clean_asr_transcript(raw_text.strip())
                     print(f"✅ [Transcribe ({GEMINI_STT_MODEL})] Result: '{transcript}'")
                     return TranscribeResponse(transcript=transcript)
+                else:
+                    print(f"⚠️ Gemini STT ({GEMINI_STT_MODEL}) returned no usable text; falling back to Groq.")
             except Exception as gemini_err:
                 print(f"⚠️ Gemini STT ({GEMINI_STT_MODEL}) skipped: {gemini_err}")
 

@@ -1,0 +1,497 @@
+[
+  {
+    "id": "Q01_FACT_9100_PETITIONER",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९१०० मा रिट निवेदक को थिए?",
+    "expected_decision_no": "9100",
+    "expected_source": "nkp_2_2_part001.pdf",
+    "expected_facts": ["भरतमणि जङ्गम", "काठमाडौं"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q02_FACT_9100_BENCH",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९१०० मा इजलासमा कुन-कुन न्यायाधीशहरू हुनुहुन्थ्यो?",
+    "expected_decision_no": "9100",
+    "expected_source": "nkp_2_2_part001.pdf",
+    "expected_facts": ["दामोदरप्रसाद शर्मा", "प्रकाश वस्ती", "भरतबहादुर कार्की"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q03_FACT_9100_DATE",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९१०० को फैसला कहिले भएको थियो?",
+    "expected_decision_no": "9100",
+    "expected_source": "nkp_2_2_part001.pdf",
+    "expected_facts": ["२०७०/११/२२", "२०७०"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q04_FACT_9099_SUBJECT",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९०९९ कुन विषयसँग सम्बन्धित मुद्दा हो?",
+    "expected_decision_no": "9099",
+    "expected_source": "nkp_3_3_part001.pdf",
+    "expected_facts": ["प्रहरी", "३० वर्ष", "सेवा अवधि", "अवकाश", "उत्प्रेषण"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q05_FACT_9099_LAWYER",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९०९९ मा निवेदकका तर्फबाट बहस गर्ने कानून व्यवसायी को-को थिए?",
+    "expected_decision_no": "9099",
+    "expected_source": "nkp_3_3_part001.pdf",
+    "expected_facts": ["हरिप्रसाद उप्रेती", "नरेन्द्र पाठक", "मेघराज पोखरेल"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q06_FACT_9102_LAND",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९१०२ मा निवेदक हितबहादुर प्याकुरेलको कुन ठाउँको जग्गा रोक्का राखिएको थियो?",
+    "expected_decision_no": "9102",
+    "expected_source": "nkp_4_4_part001.pdf",
+    "expected_facts": ["नुवाकोट", "बागेश्वरी", "२९३", "३३७", "५४३", "४५९", "८५२"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q07_FACT_9103_CITIZENSHIP_NAME",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९१०३ मा नागरिकता रद्द गरिएका पुनरावेदक प्रतिवादीको नाम के हो?",
+    "expected_decision_no": "9103",
+    "expected_source": "nkp_5_5_part001.pdf",
+    "expected_facts": ["शेष नैमुद्दिन", "पर्सा", "वीरगंज"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q08_FACT_9104_SCHOOL",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९१०४ मा कुन विद्यालयको भोगाधिकारको जग्गा विवादमा परेको थियो?",
+    "expected_decision_no": "9104",
+    "expected_source": "nkp_6_6_part001.pdf",
+    "expected_facts": ["सहयोगी उच्च माध्यमिक विद्यालय", "गोकर्णेश्वर"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q09_FACT_9105_CONTEMPT_FINE",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९१०५ मा अदालतको अपहेलनामा कसलाई कति जरीवाना गरियो?",
+    "expected_decision_no": "9105",
+    "expected_source": "nkp_7_7_part001.pdf",
+    "expected_facts": ["डा. सुधा शर्मा", "५०००", "पाँच हजार"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q10_FACT_9106_GUTHI",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९१०६ मा गुठी संस्थानले कुन गुठीको लगत भिडाई जग्गा गुठी कायम गरेको थियो?",
+    "expected_decision_no": "9106",
+    "expected_source": "nkp_8_8_part001.pdf",
+    "expected_facts": ["विश्वरूप गुठी", "लगत नं. ४६", "कि.नं. ७०"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q11_FACT_9107_ACCUSED",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९१०७ को जबर्जस्ती करणी मुद्दामा अभियुक्त को थिए र अदालतले के ठहर गर्यो?",
+    "expected_decision_no": "9107",
+    "expected_source": "nkp_9_9_part001.pdf",
+    "expected_facts": ["महेश पटेल", "सफाइ"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q12_FACT_9108_VDC",
+    "category": "A_DIRECT_FACTUAL",
+    "query": "निर्णय नं. ९१०८ मा कुन गाउँ विकास समितिले निजी जग्गामा समेत गिट्टी बालुवाको ठेक्का लगाएको थियो?",
+    "expected_decision_no": "9108",
+    "expected_source": "nkp_10_10_part001.pdf",
+    "expected_facts": ["समनपुर", "रौतहट", "नरेन्द्र झा"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q13_PROV_9100_ART88",
+    "category": "B_LEGAL_PROVISION",
+    "query": "निर्णय नं. ९१०० मा नेपालको अन्तरिम संविधान, २०६३ को कुन धाराबमोजिम अध्यादेश जारी गरिएको थियो?",
+    "expected_decision_no": "9100",
+    "expected_source": "nkp_2_2_part001.pdf",
+    "expected_facts": ["धारा ८८", "धारा १३", "अध्यादेश"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q14_PROV_9099_SEC39",
+    "category": "B_LEGAL_PROVISION",
+    "query": "निर्णय नं. ९०९९ मा प्रहरी ऐन, २०१२ को कुन दफा र नियमावलीको कुन नियम मुख्य विवादित थियो?",
+    "expected_decision_no": "9099",
+    "expected_source": "nkp_3_3_part001.pdf",
+    "expected_facts": ["दफा ३९", "नियम ९८"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q15_PROV_9102_LAND_REV",
+    "category": "B_LEGAL_PROVISION",
+    "query": "निर्णय नं. ९१०२ मा मालपोत ऐन, २०३४ को कुन दफाअनुसार जग्गा रोक्का वा फुकुवा हुने व्यवस्थाको विश्लेषण गरिएको छ?",
+    "expected_decision_no": "9102",
+    "expected_source": "nkp_4_4_part001.pdf",
+    "expected_facts": ["दफा ८ ख", "उपदफा (२)", "धारा १९"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q16_PROV_9103_EVIDENCE_23_7",
+    "category": "B_LEGAL_PROVISION",
+    "query": "निर्णय नं. ९१०३ मा प्रमाण ऐन, २०३१ को कुन दफाबमोजिम रेखा तथा लेखा विशेषज्ञको बकपत्र हुनुपर्ने उल्लेख छ?",
+    "expected_decision_no": "9103",
+    "expected_source": "nkp_5_5_part001.pdf",
+    "expected_facts": ["दफा २३(७)", "विशेषज्ञ", "बकपत्र"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q17_PROV_9105_SC_ACT",
+    "category": "B_LEGAL_PROVISION",
+    "query": "निर्णय नं. ९१०५ मा सर्वोच्च अदालत ऐन, २०४८ को कुन दफाबमोजिम अपहेलनामा सजाय गरिएको हो?",
+    "expected_decision_no": "9105",
+    "expected_source": "nkp_7_7_part001.pdf",
+    "expected_facts": ["दफा ७(१)", "धारा १०२(३)"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q18_PROV_9106_GUTHI_SEC39",
+    "category": "B_LEGAL_PROVISION",
+    "query": "गुठी संस्थान ऐन, २०३३ को दफा ३९(१) को प्रयोग सम्बन्धमा निर्णय नं. ९१०६ मा के व्याख्या गरिएको छ?",
+    "expected_decision_no": "9106",
+    "expected_source": "nkp_8_8_part001.pdf",
+    "expected_facts": ["दफा ३९", "रैकर", "गुठी", "लगत नभिडेको"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q19_PROV_9107_EVIDENCE_18_25",
+    "category": "B_LEGAL_PROVISION",
+    "query": "निर्णय नं. ९१०७ मा प्रमाण ऐन, २०३१ को दफा १८ र २५ अनुसार अनुसन्धानका बयानबारे के भनिएको छ?",
+    "expected_decision_no": "9107",
+    "expected_source": "nkp_9_9_part001.pdf",
+    "expected_facts": ["दफा १८", "दफा २५", "बकपत्र", "प्रमाणको भार"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q20_PROV_9108_LOCAL_GOV",
+    "category": "B_LEGAL_PROVISION",
+    "query": "निर्णय नं. ९१०८ मा स्थानीय स्वायत्त शासन ऐन, २०५५ को दफा ६८(ख) बमोजिम गा.वि.स.को सम्पत्तिबारे के ठहर छ?",
+    "expected_decision_no": "9108",
+    "expected_source": "nkp_10_10_part001.pdf",
+    "expected_facts": ["दफा ६८(ख)", "निजी हक", "सार्वजनिक"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q21_CASE_9100_ISSUES",
+    "category": "C_CASE_DECISION_QUESTIONS",
+    "query": "निर्णय नं. ९१०० मा पूर्व पदाधिकारी सुविधा अध्यादेश विरुद्ध निवेदकको मुख्य दावी के थियो?",
+    "expected_decision_no": "9100",
+    "expected_source": "nkp_2_2_part001.pdf",
+    "expected_facts": ["२०४६", "वर्गीकरण", "समानताको हक", "धारा १३", "व्ययभार"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q22_CASE_9099_RATIO",
+    "category": "C_CASE_DECISION_QUESTIONS",
+    "query": "निर्णय नं. ९०९९ मा ३० वर्षे सेवा अवधिको प्रावधानलाई अदालतले किन बदर गरेन?",
+    "expected_decision_no": "9099",
+    "expected_source": "nkp_3_3_part001.pdf",
+    "expected_facts": ["विशिष्ट प्रकृति", "नीतिगत", "निर्देशनात्मक आदेश", "ऐनमा"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q23_CASE_9102_HOLDING",
+    "category": "C_CASE_DECISION_QUESTIONS",
+    "query": "निर्णय नं. ९१०२ मा तीन दशकसम्म आधारबिना जग्गा रोक्का राख्ने जिल्ला अदालतको कार्यलाई सर्वोच्च अदालतले के भन्यो?",
+    "expected_decision_no": "9102",
+    "expected_source": "nkp_4_4_part001.pdf",
+    "expected_facts": ["तीन दशक", "मौलिक हक", "न्यायको मूल मर्म", "टिप्पणीयोग्य"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q24_CASE_9104_MELAMCHI",
+    "category": "C_CASE_DECISION_QUESTIONS",
+    "query": "निर्णय नं. ९१०४ मा सहयोगी उच्च माविको जग्गा मेलम्ची खानेपानी बोर्डलाई दिन मिल्ने कारण के दिइएको छ?",
+    "expected_decision_no": "9104",
+    "expected_source": "nkp_6_6_part001.pdf",
+    "expected_facts": ["भोगाधिकार", "स्वामित्व नेपाल सरकार", "सहमति"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q25_CASE_9105_SECRETARY_DEFENSE",
+    "category": "C_CASE_DECISION_QUESTIONS",
+    "query": "निर्णय नं. ९१०५ मा डा. सुधा शर्माले अपहेलनाबाट बच्न के तर्क गरेकी थिइन् र अदालतले किन अस्वीकार गर्यो?",
+    "expected_decision_no": "9105",
+    "expected_source": "nkp_7_7_part001.pdf",
+    "expected_facts": ["राजीनामा", "कागजात फेला नपरेको", "उन्मुक्ति"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q26_CASE_9107_REASONING",
+    "category": "C_CASE_DECISION_QUESTIONS",
+    "query": "निर्णय नं. ९१०७ मा अभियुक्त महेश पटेललाई सफाइ दिनुको मुख्य कानूनी आधार के थियो?",
+    "expected_decision_no": "9107",
+    "expected_source": "nkp_9_9_part001.pdf",
+    "expected_facts": ["बकपत्र", "साक्षी उपस्थित नभएको", "दफा १८", "जिरह"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q27_NAME_9103_EXPERT",
+    "category": "D_NAMES_AND_DATES",
+    "query": "निर्णय नं. ९१०३ मा राष्ट्रिय विधि विज्ञान प्रयोगशालाका कुन विशेषज्ञको बकपत्र हुन नसकेको उल्लेख छ?",
+    "expected_decision_no": "9103",
+    "expected_source": "nkp_5_5_part001.pdf",
+    "expected_facts": ["डा. सेवकराम भण्डारी"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q28_NAME_9102_INITIAL_JUDGES",
+    "category": "D_NAMES_AND_DATES",
+    "query": "निर्णय नं. ९१०२ मा पुनरावेदन अदालत पाटनमा शुरू आदेश गर्ने न्यायाधीशहरू को थिए?",
+    "expected_decision_no": "9102",
+    "expected_source": "nkp_4_4_part001.pdf",
+    "expected_facts": ["तेजबहादुर के.सी", "डा. कुलरत्न भुर्तेल"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q29_NAME_9106_BUYER",
+    "category": "D_NAMES_AND_DATES",
+    "query": "निर्णय नं. ९१०६ मा विवादित कि.नं. ७० को जग्गा २०३५ सालमा कसको नाममा रैकर दर्ता भएको थियो?",
+    "expected_decision_no": "9106",
+    "expected_source": "nkp_8_8_part001.pdf",
+    "expected_facts": ["शिवलाल ताग्राकार"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q30_DATE_9108_DECISION",
+    "category": "D_NAMES_AND_DATES",
+    "query": "निर्णय नं. ९१०८ को फैसला मिति के हो?",
+    "expected_decision_no": "9108",
+    "expected_source": "nkp_10_10_part001.pdf",
+    "expected_facts": ["२०७०/०५/२५", "२०७०"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q31_SECT_9100_ART13",
+    "category": "E_ARTICLE_SECTION_QUESTIONS",
+    "query": "निर्णय नं. ९१०० मा २०४६ सालको कटअफ मिति कुन संवैधानिक धाराको भावनाविपरीत भएको टिप्पणी गरियो?",
+    "expected_decision_no": "9100",
+    "expected_source": "nkp_2_2_part001.pdf",
+    "expected_facts": ["धारा १३", "समानताको हक"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q32_SECT_9105_CONST102",
+    "category": "E_ARTICLE_SECTION_QUESTIONS",
+    "query": "अन्तरिम संविधानको धारा १०२(३) बमोजिम सर्वोच्च अदालतलाई के अधिकार रहेको निर्णय ९१०५ मा उल्लेख छ?",
+    "expected_decision_no": "9105",
+    "expected_source": "nkp_7_7_part001.pdf",
+    "expected_facts": ["अभिलेख अदालत", "अपहेलना", "सजाय"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q33_MULTI_9099_DIRECTIVE",
+    "category": "F_MULTI_CHUNK_QUESTIONS",
+    "query": "निर्णय नं. ९०९९ मा रिट खारेज गरे पनि अदालतले सरकारको नाममा कस्तो निर्देशनात्मक आदेश जारी गर्यो?",
+    "expected_decision_no": "9099",
+    "expected_source": "nkp_3_3_part001.pdf",
+    "expected_facts": ["निर्देशनात्मक आदेश", "ऐनमा नै", "अवकाश", "अन्योल"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q34_MULTI_9100_INTERIM",
+    "category": "F_MULTI_CHUNK_QUESTIONS",
+    "query": "निर्णय नं. ९१०० मा पहिले जारी भएको अन्तरिम आदेशलाई अन्तिम फैसलामा के गरियो?",
+    "expected_decision_no": "9100",
+    "expected_source": "nkp_2_2_part001.pdf",
+    "expected_facts": ["अन्तरिम आदेश", "निष्क्रिय", "खारेज"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q35_NEIGHBOR_9102_PRAKARAN",
+    "category": "G_NEIGHBORING_CONTEXT",
+    "query": "निर्णय नं. ९१०२ को प्रकरण नं. ९ मा नागरिकको सम्पत्तिसम्बन्धी हकबारे के उल्लेख छ?",
+    "expected_decision_no": "9102",
+    "expected_source": "nkp_4_4_part001.pdf",
+    "expected_facts": ["प्रकरण नं. ९", "सम्पत्ति", "बेचबिखन", "मौलिक हक", "बन्देज"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q36_NEIGHBOR_9104_PRAKARAN",
+    "category": "G_NEIGHBORING_CONTEXT",
+    "query": "निर्णय नं. ९१०४ को प्रकरण नं. ३ मा भोगाधिकार र जग्गाधनीको अधिकारबारे के सिद्धान्त छ?",
+    "expected_decision_no": "9104",
+    "expected_source": "nkp_6_6_part001.pdf",
+    "expected_facts": ["भोगाधिकार", "जग्गाधनी", "संशोधन", "हस्तान्तरण"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q37_PARA_9105_SUKLA_OFFICER",
+    "category": "H_PARAPHRASED_NEPALI",
+    "query": "स्वास्थ्य मन्त्रालयकी तत्कालीन सचिव डा. सुधा शर्मालाई कुन पदको नतिजा ननिकालेको कारण सजाय भएको हो?",
+    "expected_decision_no": "9105",
+    "expected_source": "nkp_7_7_part001.pdf",
+    "expected_facts": ["तथ्याङ्क सहायक", "सुर्खेत"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q38_PARA_9106_SUDIR_HOUSE",
+    "category": "H_PARAPHRASED_NEPALI",
+    "query": "ललितपुरको कित्ता नं. ७० को जग्गामा सुशीला र सुधिरबहादुर श्रेष्ठले के निर्माण गरेका थिए?",
+    "expected_decision_no": "9106",
+    "expected_source": "nkp_8_8_part001.pdf",
+    "expected_facts": ["घर", "नक्सा पास", "चारतला"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q39_CONV_9100_WHAT_ABOUT",
+    "category": "I_CONVERSATIONAL_NEPALI",
+    "query": "निर्णय ९१०० मा खास के कुरामा झगडा परेको थियो बताइदिनुस् त?",
+    "expected_decision_no": "9100",
+    "expected_source": "nkp_2_2_part001.pdf",
+    "expected_facts": ["भूतपूर्व पदाधिकारी", "सुविधा", "सुरक्षा", "अध्यादेश"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q40_CONV_9099_POLICE_AGE",
+    "category": "I_CONVERSATIONAL_NEPALI",
+    "query": "प्रहरीको ३० वर्षे सेवा अवधिको मुद्दामा सर्वोच्चले के भन्यो?",
+    "expected_decision_no": "9099",
+    "expected_source": "nkp_3_3_part001.pdf",
+    "expected_facts": ["खारेज", "३० वर्ष", "निर्देशनात्मक"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q41_SPELL_MUDDHA_9102",
+    "category": "J_SPELLING_VARIATIONS",
+    "query": "निर्णय ९१०२ को मुद्धामा न्यादिश को-को थिए?",
+    "expected_decision_no": "9102",
+    "expected_source": "nkp_4_4_part001.pdf",
+    "expected_facts": ["दामोदरप्रसाद शर्मा", "प्रकाश वस्ती"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q42_SPELL_NIRNAYA_9103",
+    "category": "J_SPELLING_VARIATIONS",
+    "query": "निर्णय नं ९१०३ मा नागिरकता बदर उल्टी भयो कि भएन?",
+    "expected_decision_no": "9103",
+    "expected_source": "nkp_5_5_part001.pdf",
+    "expected_facts": ["उल्टी", "सफाइ", "कायम"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q43_DEV_DIGIT_ASCII_9105",
+    "category": "K_DEVANAGARI_NORMALIZATION",
+    "query": "decision no 9105 ma kaslai fine vayo?",
+    "expected_decision_no": "9105",
+    "expected_source": "nkp_7_7_part001.pdf",
+    "expected_facts": ["सुधा शर्मा", "५०००", "पाँच हजार"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q44_DEV_DIGIT_ASCII_9106",
+    "category": "K_DEVANAGARI_NORMALIZATION",
+    "query": "निर्णय नं. 9106 मा कुन ऐनको दफा 39 आकर्षित भयो?",
+    "expected_decision_no": "9106",
+    "expected_source": "nkp_8_8_part001.pdf",
+    "expected_facts": ["गुठी संस्थान ऐन", "दफा ३९"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q45_MIXED_LEGAL_TERMS_9100",
+    "category": "L_MIXED_LEGAL_TERMS",
+    "query": "निर्णय नं. ९१०० मा writ of certiorari माग गर्दा ratio decidendi के रह्यो?",
+    "expected_decision_no": "9100",
+    "expected_source": "nkp_2_2_part001.pdf",
+    "expected_facts": ["नीतिगत", "हस्तक्षेप", "निर्देशनात्मक"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q46_MIXED_LEGAL_TERMS_9107",
+    "category": "L_MIXED_LEGAL_TERMS",
+    "query": "निर्णय नं. ९१०७ मा expert opinion र cross examination को सम्बन्धमा के सिद्धान्त छ?",
+    "expected_decision_no": "9107",
+    "expected_source": "nkp_9_9_part001.pdf",
+    "expected_facts": ["विशेषज्ञ", "दफा २३(७)", "बकपत्र", "जिरह"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q47_CONFUSION_CITIZENSHIP_9103_VS_9107",
+    "category": "M_RETRIEVAL_CONFUSION",
+    "query": "पर्सा जिल्लाको शेष नैमुद्दिनको नागरिकता विवाद कुन निर्णय नम्बरमा फैसला भएको हो?",
+    "expected_decision_no": "9103",
+    "expected_source": "nkp_5_5_part001.pdf",
+    "expected_facts": ["९१०३", "शेष नैमुद्दिन"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q48_CONFUSION_LAND_9102_VS_9106",
+    "category": "M_RETRIEVAL_CONFUSION",
+    "query": "ललितपुरको रैकर जग्गा गुठीमा दर्ता गरिएको विवाद कुन निर्णयमा परेको थियो?",
+    "expected_decision_no": "9106",
+    "expected_source": "nkp_8_8_part001.pdf",
+    "expected_facts": ["९१०६", "ललितपुर", "सुशीला"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q49_CONFUSION_NUWAKOT_9102",
+    "category": "M_RETRIEVAL_CONFUSION",
+    "query": "नुवाकोट जिल्ला अदालतले जग्गा रोक्का राखेको सम्बन्धी परमादेश निर्णय नम्बर कति हो?",
+    "expected_decision_no": "9102",
+    "expected_source": "nkp_4_4_part001.pdf",
+    "expected_facts": ["९१०२", "हितबहादुर प्याकुरेल"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q50_NOT_FOUND_8500",
+    "category": "N_UNINDEXED_NOT_FOUND",
+    "query": "निर्णय नं. ८५०० मा बैंकिङ कसूरबारे के फैसला भएको छ?",
+    "expected_decision_no": null,
+    "expected_source": null,
+    "expected_facts": ["उपलब्ध छैन", "अनुक्रमित छैन"],
+    "is_not_found": true
+  },
+  {
+    "id": "Q51_NOT_FOUND_9999",
+    "category": "N_UNINDEXED_NOT_FOUND",
+    "query": "निर्णय नं. ९९९९ को फैसलामा को न्यायाधीश थिए?",
+    "expected_decision_no": null,
+    "expected_source": null,
+    "expected_facts": ["उपलब्ध छैन", "अनुक्रमित छैन"],
+    "is_not_found": true
+  },
+  {
+    "id": "Q52_NOT_FOUND_UNKNOWN_ACT",
+    "category": "N_UNINDEXED_NOT_FOUND",
+    "query": "प्रतिलिपि अधिकार ऐन, २०५९ को दफा २८ बमोजिम प्रतिलिपि अधिकार उल्लङ्घनमा के जरिवाना हुन्छ?",
+    "expected_decision_no": null,
+    "expected_source": null,
+    "expected_facts": ["उल्लेख छैन", "उपलब्ध छैन", "जानकारी छैन"],
+    "is_not_found": true
+  },
+  {
+    "id": "Q53_NOT_FOUND_COMPANY_ACT",
+    "category": "N_UNINDEXED_NOT_FOUND",
+    "query": "कम्पनी ऐन, २०६३ को दफा १०५ को विशेष साधारण सभा सम्बन्धी व्यवस्था के छ?",
+    "expected_decision_no": null,
+    "expected_source": null,
+    "expected_facts": ["उल्लेख छैन", "उपलब्ध छैन", "जानकारी छैन"],
+    "is_not_found": true
+  },
+  {
+    "id": "Q54_CROSS_9099_AND_9100",
+    "category": "O_CROSS_DOC_DISCRIMINATION",
+    "query": "निर्णय नं. ९०९९ र निर्णय नं. ९१०० मा अदालतले रिट निवेदन खारेज गर्दा के-के फरक विषयमा निर्देशनात्मक आदेश दियो?",
+    "expected_decision_no": "9099,9100",
+    "expected_source": "nkp_3_3_part001.pdf,nkp_2_2_part001.pdf",
+    "expected_facts": ["९०९९", "प्रहरी", "९१००", "पूर्व पदाधिकारी"],
+    "is_not_found": false
+  },
+  {
+    "id": "Q55_CROSS_ALL_CASES",
+    "category": "O_CROSS_DOC_DISCRIMINATION",
+    "query": "तपाईंसँग उपलब्ध सबै मुद्दा वा निर्णयहरूको सूची दिनुहोस्।",
+    "expected_decision_no": "ALL",
+    "expected_source": "ALL",
+    "expected_facts": ["९०९९", "९१००", "९१०२", "९१०३", "९१०४", "९१०५", "९१०६", "९१०७", "९१०८"],
+    "is_not_found": false
+  }
+]
