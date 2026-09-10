@@ -97,19 +97,16 @@ function EndCallIcon() {
   );
 }
 
+// ---- API base URL: override via VITE_API_BASE_URL in a .env file for
+//      any non-local deployment (staging, production, teammate's machine).
+//      Falls back to localhost so local `npm run dev` keeps working as-is. ----
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
 // ---- Turn VAD Parameters ----
 const SILENCE_RMS_THRESHOLD = 0.02;
 const SILENCE_HOLD_MS = 1200;
 const MIN_TURN_MS = 500;
 const MAX_TURN_MS = 18000;
-
-// Truncate helper to keep the call screen compact
-function truncateText(text, maxChars = 110) {
-  if (!text) return '';
-  const clean = text.replace(/[*#_`]/g, '').trim();
-  if (clean.length <= maxChars) return clean;
-  return clean.substring(0, maxChars).trim() + '...';
-}
 
 function App() {
   const [messages, setMessages] = useState([
@@ -120,8 +117,8 @@ function App() {
   const [darkMode, setDarkMode] = useState(false);
   const [voiceInputSupported, setVoiceInputSupported] = useState(true);
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const [serverConfig, setServerConfig] = useState({ voice_live: false });
 
-  const [currentCase, setCurrentCase] = useState(null);
   const [sessionId] = useState(() => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
     return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
@@ -157,6 +154,9 @@ function App() {
     if (!navigator.mediaDevices?.getUserMedia) {
       setVoiceInputSupported(false);
     }
+    axios.get(`${API_BASE}/api/config`)
+      .then((res) => setServerConfig(res.data))
+      .catch(() => setServerConfig({ voice_live: false }));
   }, []);
 
   // ---------- Native Neural Nepali Text-to-Speech ----------
@@ -173,7 +173,7 @@ function App() {
       }
 
       try {
-        const url = `http://localhost:8000/api/tts?text=${encodeURIComponent(text)}`;
+        const url = `${API_BASE}/api/tts?text=${encodeURIComponent(text)}`;
         const audio = new Audio(url);
         currentAudioRef.current = audio;
 
@@ -215,42 +215,36 @@ function App() {
   };
 
   // ---------- Case Tracking & RAG ----------
-  const extractDecisionNumber = (text) => {
-    const match = text.match(/निर्णय\s*नं\.?\s*(\d+)/);
-    if (match) return match[1];
-    if (text.match(/निर्णय|मुद्दा|फैसला/)) {
-      const numMatch = text.match(/\b(\d{3,4})\b/);
-      if (numMatch) return numMatch[1];
-    }
-    return null;
-  };
-
-  const updateCaseFromText = (text) => {
-    const dec = extractDecisionNumber(text);
-    if (dec) setCurrentCase({ case_id: `decision_${dec}`, decision_no: dec });
-  };
-
+  // NOTE: Case tracking used to be duplicated here on the frontend via a
+  // regex over both the user's text AND the assistant's own reply text.
+  // That was actively harmful: (1) it re-scanned the assistant's reply,
+  // so a message like "निर्णय नं. 9900 अनुक्रमित छैन। उपलब्ध निर्णय नं.:
+  // 9099, 9100..." would match "निर्णय नं. 9900" — the invalid number
+  // that had just been rejected — and silently set that as the "current
+  // case" for the next turn; (2) setCurrentCase() is an async state
+  // update, so calling it right before fetchReply() in the same
+  // function still read the *stale* value due to the closure, meaning a
+  // decision number mentioned in a message was never actually applied
+  // until the turn after; (3) it duplicated and fought with the
+  // backend's own (much more robust) session-based case tracking in
+  // session_cases, sending a case_id/decision_no guess that could
+  // override the backend's correctly-resolved one. The backend already
+  // tracks case context per session_id — the frontend only needs to send
+  // the message and session_id and let it own that state.
   const fetchReply = async (text) => {
-    const payload = {
-      message: text,
-      session_id: sessionId,
-      case_id: currentCase?.case_id || null,
-      decision_no: currentCase?.decision_no || null,
-    };
-    const res = await axios.post('http://localhost:8000/api/chat', payload);
+    const payload = { message: text, session_id: sessionId };
+    const res = await axios.post(`${API_BASE}/api/chat`, payload);
     return res.data.reply;
   };
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
     const userText = input.trim();
-    updateCaseFromText(userText);
     setMessages((prev) => [...prev, { role: 'user', content: userText }]);
     setInput('');
     setLoading(true);
     try {
       const reply = await fetchReply(userText);
-      updateCaseFromText(reply);
       setMessages((prev) => [...prev, { role: 'assistant', content: reply }]);
     } catch (err) {
       console.error(err);
@@ -267,7 +261,7 @@ function App() {
     }
   };
 
-  // ---------- Clean Up On End Call ----------
+  // ---------- Clean Up Everything On End Call ----------
   const endCall = useCallback(() => {
     callActiveRef.current = false;
 
@@ -304,6 +298,7 @@ function App() {
     return Math.sqrt(sum / buffer.length);
   };
 
+  // Process a completed question turn, speak the answer, and resume listening
   const processAudioTurn = async (audioBlob, resumeListeningFn) => {
     if (!callActiveRef.current) return;
     setCallState('thinking');
@@ -312,30 +307,30 @@ function App() {
       // 1. Transcribe
       const formData = new FormData();
       formData.append('audio', audioBlob, 'recording.webm');
-      const trRes = await axios.post('http://localhost:8000/api/transcribe', formData);
+      const trRes = await axios.post(`${API_BASE}/api/transcribe`, formData);
       const userText = trRes.data.transcript?.trim();
 
       if (!userText || !callActiveRef.current) {
+        // If silence or empty noise, resume listening immediately
         if (callActiveRef.current && resumeListeningFn) resumeListeningFn();
         return;
       }
 
       setMessages((prev) => [...prev, { role: 'user', content: userText }]);
-      updateCaseFromText(userText);
 
       // 2. Query Hybrid Legal RAG
       const botReply = await fetchReply(userText);
       if (!callActiveRef.current) return;
 
-      updateCaseFromText(botReply);
       setMessages((prev) => [...prev, { role: 'assistant', content: botReply }]);
 
-      // 3. Play Speech
+      // 3. Play Natural Nepali Neural Speech
       setCallState('speaking');
       await speak(botReply);
 
-      // 4. Multi-Turn: Automatically resume listening for the next question
+      // 4. Multi-Turn Loop: Automatically resume listening for the next question!
       if (callActiveRef.current) {
+        // Short pause to avoid mic picking up speaker echo
         setTimeout(() => {
           if (callActiveRef.current && resumeListeningFn) {
             resumeListeningFn();
@@ -375,9 +370,11 @@ function App() {
       const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
       const buffer = new Float32Array(analyser.fftSize);
 
+      // Function to start a fresh MediaRecorder turn with a proper WebM header
       const startNewTurnRecording = () => {
         if (!callActiveRef.current) return;
 
+        // Ensure audio context remains active
         if (ctx.state === 'suspended') {
           ctx.resume();
         }
@@ -406,11 +403,13 @@ function App() {
               return;
             }
           }
+          // If turn was discarded, immediately resume listening
           if (callActiveRef.current) {
             startNewTurnRecording();
           }
         };
 
+        // Start recording so the initial syllable is captured as soon as speech begins
         try {
           recorder.start(100);
         } catch (e) {
@@ -419,6 +418,7 @@ function App() {
         setCallState('listening');
       };
 
+      // VAD monitoring loop running on requestAnimationFrame
       const vadLoop = () => {
         if (!callActiveRef.current) return;
 
@@ -426,6 +426,7 @@ function App() {
         const rms = calculateRMS(buffer);
         const now = Date.now();
 
+        // Only detect user speech when assistant is in 'listening' mode
         if (callStateRef.current === 'listening') {
           if (rms > SILENCE_RMS_THRESHOLD) {
             silenceStartRef.current = null;
@@ -438,6 +439,7 @@ function App() {
             const silenceDuration = now - silenceStartRef.current;
             const turnDuration = now - turnStartRef.current;
 
+            // Silence threshold reached -> end question and process
             if (silenceDuration > SILENCE_HOLD_MS || turnDuration > MAX_TURN_MS) {
               isRecordingTurnRef.current = false;
               silenceStartRef.current = null;
@@ -452,6 +454,7 @@ function App() {
         animFrameRef.current = requestAnimationFrame(vadLoop);
       };
 
+      // Begin first listening turn
       startNewTurnRecording();
       vadLoop();
     } catch (err) {
@@ -469,13 +472,10 @@ function App() {
 
   const callStatusText = {
     listening: 'सुन्दै...',
-    thinking: 'प्रमाण खोज्दै...',
-    speaking: 'जवाफ दिँदै...',
+    thinking: 'सोच्दै...',
+    speaking: 'बोल्दै...',
     idle: 'तयार',
   }[callState];
-
-  const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
-  const lastAssistantMsg = [...messages].reverse().find((m) => m.role === 'assistant')?.content || '';
 
   return (
     <div className="app" data-theme={darkMode ? 'dark' : 'light'}>
@@ -574,40 +574,19 @@ function App() {
         <p className="disclaimer">यहाँ दिइएको जानकारी कानूनी सल्लाहको विकल्प होइन।</p>
       </div>
 
-      {/* Structured Call Overlay with Clean Dialogue Card */}
       {callActive && (
         <div className="call-overlay" role="dialog" aria-modal="true" aria-label="भ्वाइस कल">
           <div className="call-panel">
             <span className="call-seal"><SealMark /></span>
             <p className="call-brand">औपचारिक सहायक</p>
-            
             <div className={`call-orb call-orb--${callState}`}>
               <MicIconLarge />
             </div>
-            
-            <p className="call-status">
-              {callStatusText}
-              {callState === 'thinking' && <span className="call-dots">...</span>}
+            <p className="call-status">{callStatusText}</p>
+            <p className="call-last-line">
+              {messages[messages.length - 1]?.role === 'user' ? 'तपाईं: ' : 'सहायक: '}
+              {messages[messages.length - 1]?.content}
             </p>
-
-            {/* Compact Live Dialogue Card */}
-            <div className="call-dialogue-card">
-              {lastUserMsg && (
-                <div className="call-dialogue-row call-dialogue-row--user">
-                  <span className="call-badge">तपाईं:</span>
-                  <span className="call-dialogue-text">{truncateText(lastUserMsg, 75)}</span>
-                </div>
-              )}
-              <div className="call-dialogue-row call-dialogue-row--assistant">
-                <span className="call-badge">सहायक:</span>
-                <span className="call-dialogue-text">
-                  {callState === 'thinking' && 'उत्तर खोज्दैछु...'}
-                  {callState === 'listening' && (!lastAssistantMsg ? 'प्रश्न सोध्नुहोस्...' : truncateText(lastAssistantMsg, 110))}
-                  {callState === 'speaking' && truncateText(lastAssistantMsg, 110)}
-                </span>
-              </div>
-            </div>
-
             <button type="button" className="call-end-button" onClick={endCall} aria-label="कल अन्त्य गर्नुहोस्">
               <EndCallIcon />
             </button>

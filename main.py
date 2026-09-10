@@ -1,6 +1,7 @@
 import os
 import sys
 import io
+import asyncio
 import pickle
 import uuid
 import json
@@ -159,7 +160,17 @@ async def text_to_speech(text: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+def chat(request: ChatRequest):
+    # Deliberately a plain `def`, not `async def`. This function never
+    # awaits anything — every call inside it (SentenceTransformer.encode,
+    # the cross-encoder, the Groq SDK, chromadb's client) is a blocking,
+    # synchronous call. Declaring it `async def` without any real `await`
+    # previously meant each of those blocking calls ran directly on the
+    # event loop and froze the *entire* server — every other in-flight
+    # request, including a trivial /api/health check — for the full 1-5+
+    # seconds a chat turn takes. FastAPI automatically runs plain `def`
+    # path functions in a worker thread pool, which fixes this with no
+    # other code changes needed.
     try:
         raw_query = clean_asr_transcript(request.message)
         query = clean_devanagari_text(raw_query)
@@ -379,7 +390,15 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         #    rather than a plain `text` part (response.text alone can miss it).
         if client:
             try:
-                response = client.models.generate_content(
+                # Wrapped in asyncio.to_thread: the Gemini SDK's
+                # generate_content call is synchronous/blocking. Calling it
+                # directly inside this async endpoint would freeze the
+                # entire server (all concurrent users) for the 1-3+ seconds
+                # a transcription call typically takes — same underlying
+                # issue as /api/chat, fixed here without giving up the
+                # `await audio.read()` this endpoint needs above.
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
                     model=GEMINI_STT_MODEL,
                     contents=[
                         types.Part.from_bytes(data=audio_bytes, mime_type=clean_mime),
@@ -414,7 +433,8 @@ async def transcribe_audio(audio: UploadFile = File(...)):
             try:
                 file_obj = io.BytesIO(audio_bytes)
                 file_obj.name = "audio.webm"
-                transcription = groq_client.audio.transcriptions.create(
+                transcription = await asyncio.to_thread(
+                    groq_client.audio.transcriptions.create,
                     file=file_obj,
                     model="whisper-large-v3",
                     language="ne",
