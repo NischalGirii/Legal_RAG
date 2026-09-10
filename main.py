@@ -5,7 +5,9 @@ import asyncio
 import pickle
 import uuid
 import json
+import shutil
 import traceback
+from pathlib import Path
 from typing import Optional, Dict
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
@@ -27,7 +29,9 @@ from src.hybrid_search import (
     detect_query_intent,
     decision_exists,
     snap_decision_number,
+    reset_lookup_indexes,
 )
+from src.ingest import process_uploaded_file, _SUPPORTED_UPLOAD_EXTS
 from src.config import (
     CHROMA_PATH,
     COLLECTION_NAME,
@@ -38,6 +42,8 @@ from src.config import (
     LLM_MODEL,
     VOICE_LANGUAGE,
     GEMINI_STT_MODEL,
+    CROSS_ENCODER_MODEL,
+    CROSS_ENCODER_FALLBACK,
 )
 from src.sparse_index import retriever_from_pickle
 from src.text_processor import clean_devanagari_text, clean_asr_transcript, clean_text_for_tts
@@ -53,6 +59,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---- Upload directory ----
+UPLOAD_DIR = Path("data/uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---- Clients ----
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -75,11 +85,16 @@ except Exception as e:
     print(f"❌ Failed to load knowledge base: {e}")
     sys.exit(1)
 
-cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+try:
+    cross_encoder = CrossEncoder(CROSS_ENCODER_MODEL)
+    print(f"✅ Cross-encoder loaded: {CROSS_ENCODER_MODEL}")
+except Exception as e:
+    print(f"⚠️ Failed to load {CROSS_ENCODER_MODEL}: {e}")
+    print(f"   Falling back to {CROSS_ENCODER_FALLBACK}")
+    cross_encoder = CrossEncoder(CROSS_ENCODER_FALLBACK)
 session_cases: Dict[str, dict] = {}
 
-# ---- Load global case metadata at startup so LIST_CASES / decision-existence
-#      checks always have the full picture instead of relying on None. ----
+# ---- Load global case metadata at startup ----
 METADATA_INFO = None
 if os.path.exists(CASE_INDEX_PATH):
     try:
@@ -98,11 +113,42 @@ elif os.path.exists(INGEST_METADATA_PATH):
     except Exception as e:
         print(f"⚠️ Could not load INGEST_METADATA_PATH: {e}")
 
+
+def reload_knowledge_base():
+    """Reloads in-memory BM25 index and case metadata after an incremental upload."""
+    global bm25, chunk_metadata, METADATA_INFO
+    try:
+        with open(BM25_INDEX_PATH, "rb") as f:
+            bm25_data = pickle.load(f)
+        bm25 = retriever_from_pickle(bm25_data)
+        chunk_metadata = bm25_data.get("metadata", [])
+        reset_lookup_indexes()
+        print(f"🔄 Knowledge base reloaded: {len(chunk_metadata)} chunks.")
+    except Exception as e:
+        print(f"⚠️ Failed to reload BM25: {e}")
+
+    if os.path.exists(CASE_INDEX_PATH):
+        try:
+            with open(CASE_INDEX_PATH, "r", encoding="utf-8") as f:
+                case_index_data = json.load(f)
+            METADATA_INFO = {"case_metadata": case_index_data}
+        except Exception as e:
+            print(f"⚠️ Could not reload CASE_INDEX_PATH: {e}")
+    elif os.path.exists(INGEST_METADATA_PATH):
+        try:
+            with open(INGEST_METADATA_PATH, "r", encoding="utf-8") as f:
+                ingest_data = json.load(f)
+            METADATA_INFO = {"case_metadata": ingest_data.get("case_metadata", {})}
+        except Exception as e:
+            print(f"⚠️ Could not reload INGEST_METADATA_PATH: {e}")
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
     case_id: Optional[str] = None
     decision_no: Optional[str] = None
+    attached_file_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     reply: str
@@ -133,12 +179,11 @@ def infer_case_from_keywords(query: str) -> Optional[dict]:
 @app.get("/api/config")
 async def get_config():
     return {
-        "voice_live": False,  # Uses the robust multi-turn VAD pipeline
+        "voice_live": False,
         "voice_language": VOICE_LANGUAGE,
         "stt_model": GEMINI_STT_MODEL,
     }
 
-# ---- Native Neural Nepali TTS (Strips Markdown for Natural Speech) ----
 @app.get("/api/tts")
 async def text_to_speech(text: str):
     if not text or not text.strip():
@@ -159,32 +204,54 @@ async def text_to_speech(text: str):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    file_name = file.filename or "upload"
+    ext = Path(file_name).suffix.lower()
+    if ext not in _SUPPORTED_UPLOAD_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Accepted: {', '.join(_SUPPORTED_UPLOAD_EXTS)}",
+        )
+
+    unique_name = f"{uuid.uuid4().hex[:8]}_{file_name}"
+    dest_path = UPLOAD_DIR / unique_name
+
+    try:
+        contents = await file.read()
+        dest_path.write_bytes(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+    try:
+        result = await asyncio.to_thread(process_uploaded_file, str(dest_path))
+        reload_knowledge_base()
+    except ValueError as e:
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        traceback.print_exc()
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
+
+    return {
+        "file_id": result["file_id"],
+        "file_name": result["file_name"],
+        "chunks_added": result["chunks_added"],
+        "message": (
+            f"✅ '{result['file_name']}' ingested — {result['chunks_added']} chunks added."
+            if result["chunks_added"] > 0
+            else f"⚠️ '{result['file_name']}' was processed but no text could be extracted."
+        ),
+    }
+
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    # Deliberately a plain `def`, not `async def`. This function never
-    # awaits anything — every call inside it (SentenceTransformer.encode,
-    # the cross-encoder, the Groq SDK, chromadb's client) is a blocking,
-    # synchronous call. Declaring it `async def` without any real `await`
-    # previously meant each of those blocking calls ran directly on the
-    # event loop and froze the *entire* server — every other in-flight
-    # request, including a trivial /api/health check — for the full 1-5+
-    # seconds a chat turn takes. FastAPI automatically runs plain `def`
-    # path functions in a worker thread pool, which fixes this with no
-    # other code changes needed.
     try:
         raw_query = clean_asr_transcript(request.message)
         query = clean_devanagari_text(raw_query)
-        # The frontend must persist and resend this session_id on every
-        # subsequent request (see ChatResponse.session_id below) — otherwise
-        # a fresh uuid is minted each turn and session_cases (sticky case
-        # tracking) never actually persists across the conversation.
         sess_id = request.session_id or str(uuid.uuid4())
 
-        # Pass the sticky case's case_id so extract_query_identifiers' own
-        # pronoun-resolution ("यो", "उक्त", "सो", ...) can actually fire —
-        # previously this parameter was never supplied, so that logic was
-        # dead code and pronoun references silently fell through to the
-        # unconditional session_cases fallback instead.
         active_case_id = (session_cases.get(sess_id) or {}).get("case_id")
         identifiers = extract_query_identifiers(query, active_case_id=active_case_id)
         intent = detect_query_intent(query)
@@ -204,26 +271,12 @@ def chat(request: ChatRequest):
             if comparison_reply:
                 return ChatResponse(reply=comparison_reply, session_id=sess_id)
 
-        # 2. Resolve the requested decision number, if any, with ASR/typo
-        #    tolerance: snap a near-miss like "91099" -> "9099" instead of
-        #    bluntly rejecting it (this is exactly the "audio mis-hears the
-        #    number" problem — see snap_decision_number's edit-distance
-        #    tolerance in hybrid_search.py).
+        # 2. Decision number snapping and validation
         requested_dec = identifiers.get("decision_no")
         requested_dec_is_explicit = bool(requested_dec) and not identifiers.get("_inferred_as_standalone")
         if requested_dec:
             requested_dec = snap_decision_number(requested_dec, chunk_metadata)
 
-        # Only reject immediately for an EXPLICIT, high-confidence reference
-        # (a literal "निर्णय नं. XXXX" pattern) that still doesn't exist
-        # after snapping. A WEAKLY inferred number (extract_query_identifiers'
-        # fallback: "any case-keyword nearby + exactly one bare number") is
-        # not reliable enough to short-circuit on its own — e.g. "प्रहरी सेवा
-        # २०४९ ... फैसला" contains "२०४९", the *regulation year*, not a
-        # decision number, and infer_case_from_keywords below correctly
-        # resolves that query to a real case (9099) via the word "प्रहरी".
-        # Rejecting on the weak number guess alone, before keyword inference
-        # gets a chance, previously broke that working case entirely.
         if (
             requested_dec_is_explicit
             and intent not in ("LIST_CASES", "COMPARISON")
@@ -242,32 +295,11 @@ def chat(request: ChatRequest):
                 session_id=sess_id,
             )
 
-        # 3. Bypass sticky session lock for genuinely global queries.
-        #    - LIST_CASES / COMPARISON: explicit "list/compare everything" intent.
-        #    - LEGAL_PROVISION: "X ऐन/धारा भनेको के हो?" is a general-law
-        #      question, not a question about whatever case was last
-        #      discussed — silently scoping it to the sticky case only
-        #      produces a false "not found" for content that may not even
-        #      relate to that case.
-        #    - CROSS_CASE_CUES: explicit "among your decisions..." survey
-        #      questions must search everything, not just the sticky case.
-        #      Without this, such a question was observed to get scoped to
-        #      whichever single case was last discussed, and the LLM then
-        #      produced a plausible-sounding but factually wrong answer
-        #      about *that* case instead of correctly identifying a
-        #      different, actually-matching case elsewhere in the corpus.
+        # 3. Handle session and query case
         CROSS_CASE_CUES = ["मध्ये", "सबै निर्णयमा", "सबैमा", "कुन निर्णयमा", "कुनकुन निर्णयमा"]
         if intent in ("LIST_CASES", "COMPARISON") or intent == "LEGAL_PROVISION" or any(cue in query for cue in CROSS_CASE_CUES):
             current_case = None
         else:
-            # Resolve the *real* case_id from METADATA_INFO rather than
-            # assuming "decision_{no}" — ingest.py only uses that convention
-            # when it successfully read the decision number off the PDF;
-            # otherwise it falls back to a "file_<name>" case_id, and
-            # guessing wrong here silently breaks the Chroma `where` filter
-            # downstream (perform_hybrid_search's decision-number fallback
-            # covers this too, but resolving it correctly at the source is
-            # cheaper and keeps session_cases accurate for later turns).
             query_case = None
             if requested_dec and decision_exists(requested_dec, chunk_metadata):
                 case_info = (METADATA_INFO or {}).get("case_metadata", {}).get(requested_dec)
@@ -280,9 +312,6 @@ def chat(request: ChatRequest):
             if query_case is None:
                 query_case = infer_case_from_keywords(query)
 
-            # A weakly-inferred number that matched neither a real decision
-            # nor any keyword-based case: now it's safe to tell the user
-            # it isn't indexed, since we gave keyword inference a fair shot.
             if query_case is None and requested_dec and not requested_dec_is_explicit:
                 available = []
                 if METADATA_INFO and METADATA_INFO.get("case_metadata"):
@@ -298,8 +327,6 @@ def chat(request: ChatRequest):
                 )
 
             if query_case is None and identifiers.get("_inferred_from_context") and active_case_id:
-                # Explicit pronoun reference ("यो", "उक्त", "सो", ...) back
-                # to the case already being discussed.
                 query_case = session_cases.get(sess_id)
 
             if query_case:
@@ -310,7 +337,33 @@ def chat(request: ChatRequest):
                 if current_case is None and sess_id in session_cases:
                     current_case = session_cases[sess_id]
 
-        # 3. First hybrid search attempt (scoped to current_case if applicable)
+        # 4. Resolve attached file if provided
+        attached_source: Optional[str] = None
+        attached_case: Optional[dict] = None
+        if request.attached_file_id:
+            has_attached = any(
+                m.get("source") == request.attached_file_id or m.get("case_id") == request.attached_file_id
+                for m in chunk_metadata
+            )
+            if not has_attached:
+                reload_knowledge_base()
+
+            for m in reversed(chunk_metadata):
+                if m.get("source") == request.attached_file_id or m.get("case_id") == request.attached_file_id:
+                    attached_source = m.get("source")
+                    attached_case = {
+                        "case_id": m.get("case_id"),
+                        "decision_no": m.get("decision_no", ""),
+                    }
+                    break
+
+            if attached_source:
+                print(f"[chat] Scoping search to uploaded file source='{attached_source}'")
+                if attached_case:
+                    current_case = attached_case
+                    session_cases[sess_id] = attached_case
+
+        # 5. Search with target_source scoping
         results = perform_hybrid_search(
             query=query,
             collection=collection,
@@ -321,11 +374,11 @@ def chat(request: ChatRequest):
             alpha=0.7,
             current_case=current_case,
             identifiers=identifiers,
+            target_source=attached_source,
         )
 
-        # 4. Unscoped fallback retry if scoped search yielded zero results —
-        #    prevents a wrong/eager case-lock from silently producing "no info".
-        if not results and current_case:
+        # 6. Fallback unscoped search if scoped query was empty (and not scoped to an uploaded file)
+        if not results and current_case and not attached_source:
             print(f"🔄 Scoped search in {current_case.get('case_id')} empty. Retrying unscoped search across entire corpus...")
             results = perform_hybrid_search(
                 query=query,
@@ -339,7 +392,7 @@ def chat(request: ChatRequest):
                 identifiers=identifiers,
             )
 
-        # 5. Cross-Encoder reranking
+        # 7. Cross-Encoder reranking
         if results:
             pairs = [[query, r["content"]] for r in results]
             scores = cross_encoder.predict(pairs)
@@ -348,7 +401,7 @@ def chat(request: ChatRequest):
             results.sort(key=lambda x: x["score"], reverse=True)
             results = results[:5]
 
-        # 6. Pass real METADATA_INFO and chunk_metadata through.
+        # 8. Generate answer
         answer = generate_nepali_answer(
             query=query,
             retrieved_items=results,
@@ -385,18 +438,9 @@ async def transcribe_audio(audio: UploadFile = File(...)):
 
         print(f"[Transcribe] Processing {len(audio_bytes)} bytes ({clean_mime})...")
 
-        # 1. Gemini STT — force text-only output and inspect all part types,
-        #    since some responses return only an `audio_transcription` part
-        #    rather than a plain `text` part (response.text alone can miss it).
+        # 1. Gemini STT
         if client:
             try:
-                # Wrapped in asyncio.to_thread: the Gemini SDK's
-                # generate_content call is synchronous/blocking. Calling it
-                # directly inside this async endpoint would freeze the
-                # entire server (all concurrent users) for the 1-3+ seconds
-                # a transcription call typically takes — same underlying
-                # issue as /api/chat, fixed here without giving up the
-                # `await audio.read()` this endpoint needs above.
                 response = await asyncio.to_thread(
                     client.models.generate_content,
                     model=GEMINI_STT_MODEL,

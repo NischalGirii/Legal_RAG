@@ -32,7 +32,7 @@ def get_groq_client():
     if _groq_client is None and GROQ_API_KEY:
         _groq_client = Groq(api_key=GROQ_API_KEY)
     return _groq_client
-
+NOT_IN_SOURCE = "उपलब्ध स्रोतमा यो विवरण भेटिएन।"
 NO_INFO = "माफ गर्नुहोस्, यस विषयमा उपलब्ध जानकारी छैन।"
 GROQ_UNAVAILABLE = "माफ गर्नुहोस्, अहिले सूचना सेवा उपलब्ध छैन।"
 SERVER_ERROR = "माफ गर्नुहोस्, अहिले सर्भरमा समस्या देखिएको छ।"
@@ -53,7 +53,7 @@ def get_deterministic_answer(query: str) -> str | None:
         return "रिट (Writ) भनेको अदालतबाट जारी गरिने लिखित आदेश हो, जसले कानूनी कर्तव्य पालना गर्न, मौलिक हक संरक्षण गर्न, वा गैरकानूनी कार्य रोक्न निर्देशन दिन्छ।"
     return None
 
-def truncate_at_sentence(text: str, max_len: int = 300) -> str:
+def truncate_at_sentence(text: str, max_len: int = 400) -> str:
     if len(text) <= max_len:
         return text
     truncated = text[:max_len]
@@ -150,7 +150,7 @@ def _card_context(card: dict) -> str:
         f"मुख्य तथ्य: {card['key_facts'] or 'उपलब्ध छैन'}",
         f"कानूनी प्रश्न: {card['legal_questions'] or 'उपलब्ध छैन'}",
         f"निष्कर्ष: {card['reasoning'] or 'उपलब्ध छैन'}",
-        f"अन्तिम आदेश: {card['final_order'] or 'उपलब्ध छैन'}",
+        f"अन्तिम आदेश / फैसला: {card['final_order'] or 'उपलब्ध छैन'}",
         f"कानूनी सिद्धान्त: {card['legal_principle'] or 'उपलब्ध छैन'}",
     ]
     return "\n".join(lines)
@@ -165,11 +165,11 @@ def _format_structured_comparison(cards: list[dict]) -> str:
             f"### निर्णय नं. {card['decision_no']}\n"
             f"* **विषय:** {card['subject'] or 'उपलब्ध छैन'}\n"
             f"* **मिति:** {card['date'] or 'उपलब्ध छैन'}\n"
-            f"* **निवेदक:** {card['petitioner'] or 'उपलब्ध छैन'}\n"
+            f"* **पुनरावेदक:** {card['petitioner'] or 'उपलब्ध छैन'}\n"
             f"* **विपक्षी:** {card['respondent'] or 'उपलब्ध छैन'}\n"
             f"* **न्यायाधीश:** {card['judges'] or 'उपलब्ध छैन'}\n"
             f"* **मुख्य तथ्य:** {truncate_at_sentence(card['key_facts'], 420) if card['key_facts'] else 'उपलब्ध छैन'}\n"
-            f"* **अदालतको निष्कर्ष / अन्तिम आदेश:** {truncate_at_sentence(card['final_order'], 360) if card['final_order'] else 'उपलब्ध छैन'}\n"
+            f"* **अदालतको अन्तिम ठहर / आदेश:** {truncate_at_sentence(card['final_order'], 360) if card['final_order'] else 'उपलब्ध छैन'}\n"
             f"* **मुख्य कानूनी सिद्धान्त:** {card['legal_principle'] or 'उपलब्ध छैन'}"
         )
     return "\n\n".join(blocks)
@@ -203,29 +203,31 @@ def _extract_from_manual(manual: dict, category: str) -> str | None:
                 return f"न्यायाधीश: {raw.strip()}"
         return None
     if category == "petitioner":
-        if "निवेदक:" in parties:
-            start = parties.find("निवेदक:") + len("निवेदक:")
+        if "निवेदक:" in parties or "पुनरावेदक:" in parties:
+            start = parties.find("निवेदक:") if "निवेदक:" in parties else parties.find("पुनरावेदक:")
+            start += len("निवेदक:")
             end = parties.find("विपक्षी:", start)
             val = parties[start: end if end != -1 else len(parties)].strip()
             if val:
-                return f"निवेदक: {val}"
+                return f"पुनरावेदक/निवेदक: {val}"
         m = re.search(r"(?:निवेदक|पुनरावेदक)\s*[:：]\s*([^\n]+)", parties or intro)
         if m:
             val = m.group(1).strip()
             if val:
-                return f"निवेदक/पुनरावेदक: {val}"
+                return f"पुनरावेदक/निवेदक: {val}"
         return None
     if category == "respondent":
-        if "विपक्षी:" in parties:
-            start = parties.find("विपक्षी:") + len("विपक्षी:")
+        if "विपक्षी:" in parties or "प्रत्यर्थी:" in parties:
+            start = parties.find("विपक्षी:") if "विपक्षी:" in parties else parties.find("प्रत्यर्थी:")
+            start += len("विपक्षी:")
             val = parties[start:].split("\n")[0].strip()
             if val:
-                return f"विपक्षी: {val}"
+                return f"प्रत्यर्थी/विपक्षी: {val}"
         m = re.search(r"(?:विपक्षी|प्रत्यर्थी)\s*[:：]\s*([^\n]+)", parties or intro)
         if m:
             val = m.group(1).strip()
             if val:
-                return f"विपक्षी: {val}"
+                return f"प्रत्यर्थी/विपक्षी: {val}"
         return None
     if category == "lawyers":
         lawyers = manual.get("lawyers", "")
@@ -257,13 +259,12 @@ def answer_factual_query(query: str, retrieved_items: list, current_case: dict =
 
     q_lower = query.lower()
     header_item = next((item for item in retrieved_items if item.get("is_header")), None)
-    all_content = "\n".join([item.get("content", "") for item in retrieved_items])
 
     if header_item:
-        if any(kw in q_lower for kw in ["अन्तिम आदेश", "निष्कर्ष", "सदर", "उल्टी", "खारेज"]):
+        if any(kw in q_lower for kw in ["अन्तिम आदेश", "निष्कर्ष", "सदर", "उल्टी", "खारेज", "ठहर"]):
             val = clean_ocr_field(header_item.get("final_order"))
             if val and val != "UNKNOWN":
-                return f"अन्तिम आदेश: {val}"
+                return f"अदालतको अन्तिम फैसला / आदेश: {val}"
         if any(kw in q_lower for kw in ["सिद्धान्त", "प्रतिपादन", "precedent"]):
             val = clean_ocr_field(header_item.get("legal_principle"))
             if val and val != "UNKNOWN":
@@ -282,7 +283,7 @@ def answer_factual_query(query: str, retrieved_items: list, current_case: dict =
         category = "subject"
     elif "मिति" in q_lower or "कहिले" in q_lower:
         category = "date"
-    elif ("अन्तिम" in q_lower and "आदेश" in q_lower) or "निष्कर्ष" in q_lower:
+    elif ("अन्तिम" in q_lower and "आदेश" in q_lower) or "निष्कर्ष" in q_lower or "ठहर" in q_lower:
         category = "final_order"
 
     if category is None:
@@ -319,7 +320,7 @@ def answer_factual_query(query: str, retrieved_items: list, current_case: dict =
         elif category == "final_order":
             final_order = header_item.get("final_order")
             if final_order and final_order != "UNKNOWN":
-                return f"अन्तिम आदेश: {final_order}"
+                return f"अन्तिम फैसला / आदेश: {final_order}"
 
     return None
 
@@ -410,12 +411,6 @@ def generate_nepali_answer(
                 return "\n".join(lines)
         return "मसँग हाल कुनै मुद्दाको जानकारी उपलब्ध छैन।"
 
-    # Use the real chunk_metadata (when the caller passes it) instead of
-    # forcing this check to rely solely on the case_index.json file. This
-    # keeps this check consistent with every other decision_exists() call
-    # in the pipeline (perform_hybrid_search / main.py already pass real
-    # chunk_metadata), so a decision present in the vector index but not
-    # yet reflected in case_index.json isn't wrongly reported as unindexed.
     if dec_no and not decision_exists(dec_no, chunk_metadata) and case_id not in MANUAL_SUMMARIES:
         available = []
         if metadata_info and metadata_info.get("case_metadata"):
@@ -430,7 +425,6 @@ def generate_nepali_answer(
 
     manual = MANUAL_SUMMARIES.get(case_id) if case_id else None
 
-    # Handle summary / case about
     if intent in ("CASE_ABOUT", "CASE_LOOKUP") and manual:
         subject = ""
         if metadata_info:
@@ -447,13 +441,14 @@ def generate_nepali_answer(
     if factual_answer:
         return factual_answer
 
-    chunks_to_use = retrieved_items[:5]
+    # Preserve up to 7 chunks with complete sentence boundaries for synthesis
+    chunks_to_use = retrieved_items[:7]
     evidence_parts = []
     for item in chunks_to_use:
         page = item.get("page", "?")
         content = item.get("content", "")
-        if len(content) > 600:
-            content = truncate_at_sentence(content, 600)
+        if len(content) > 850:
+            content = truncate_at_sentence(content, 850)
         evidence_parts.append(f"--- पृष्ठ {page} ---\n{content}")
     context = "\n\n".join(evidence_parts)
 
@@ -465,7 +460,7 @@ def generate_nepali_answer(
             f"**पक्षकार:** {man.get('parties', '')}",
             f"**न्यायाधीश:** {man.get('judges', '')}",
             f"**मुख्य तथ्य:** {man.get('key_facts', '')}",
-            f"**अन्तिम आदेश:** {man.get('final_order', '')}",
+            f"**अन्तिम आदेश / फैसला:** {man.get('final_order', '')}",
             f"**मुख्य कानूनी सिद्धान्त:** {man.get('legal_principle', '')}",
         ]
         manual_context = "\n\n".join(f for f in summary_fields if f.strip())
@@ -473,19 +468,23 @@ def generate_nepali_answer(
     if not get_groq_client():
         return GROQ_UNAVAILABLE
 
-    system_prompt = f"""तपाईं नेपाली कानूनी सहायक हुनुहुन्छ। उत्तर शुद्ध नेपालीमा दिनुहोस्।
+    system_prompt = f"""तपाईं एक दक्ष नेपाली कानून विशेषज्ञ हुनुहुन्छ। तल दिइएको "प्रमाण" भित्रको तथ्य मात्र पढेर शुद्ध नेपालीमा निष्पक्ष र सही उत्तर दिनुहोस्।
 
-**कडा नियम:**
-1. तल दिइएको "प्रमाण" भित्रको जानकारी मात्र प्रयोग गर्नुहोस्।
-2. प्रमाणमा उल्लेख भएको तथ्य, कानूनी आधार वा अदालतको ठहर मात्र उल्लेख गर्नुहोस्।
-3. यदि प्रमाणमा जानकारी छैन भने "उपलब्ध प्रमाणमा यस विषयको उल्लेख छैन।" भन्नुहोस्।
-4. आफ्ना तर्फबाट कुनै पनि काल्पनिक तथ्य नथप्नुहोस्।
+**कडा कानूनी नियमहरू:**
+1. **अन्तिम फैसला स्पष्ट खुलाउनुहोस्:** शुरुवाती जिकिर मात्र नभई अदालतको अन्तिम ठहर/निष्कर्ष (सदर, खारेज, बदर वा परमादेश जारी) के भयो, अनिवार्य खुलाउनुहोस्।
+2. **शर्तयुक्त वाक्यहरूको सही अर्थ निकाल्नुहोस्:** "नराखिएको भए रोक्का राख्नुपर्ने नदेखिएमा फुकुवा गरिदिनु" जस्ता सकारात्मक/नकारात्मक शर्तहरूको उल्टो अर्थ नलगाउनुहोस्। फुकुवा गर्न आदेश भएको अवस्थालाई रोक्का राख्नुपर्ने भनी नलेख्नुहोस्।
+3. **पक्षकारको भूमिका प्रष्ट राख्नुहोस्:** पुनरावेदक को हो र विपक्षी को हो, प्रष्ट उल्लेख गर्नुहोस्।
+4. **काल्पनिक कुरा नथप्नुहोस्:** प्रमाण खण्डमा उल्लेख नभएका कुरा आफ्ना तर्फबाट नबनाउनुहोस्।
+5. **कडा ग्राउन्डिङ:** प्रमाणमा स्पष्ट रूपमा नभएको कुनै पनि तथ्य, मिति, नाम, दफा, निर्णय नं., वा निष्कर्ष उत्पादन गर्नु हुँदैन। आफ्नो सामान्य ज्ञान प्रयोग गर्नु हुँदैन।
+6. **तथ्य नभेटिएमा स्पष्ट भन्नुहोस्:** यदि प्रश्नको उत्तर दिइएको प्रमाणमा प्रत्यक्ष रूपमा भेटिएन भने — अनुमान नगरी — ठ्याक्कै यो वाक्य मात्र लेख्नुहोस्:
+   "उपलब्ध स्रोतमा यो विवरण भेटिएन।"
+7. **प्रमाण बाहिरका नजिर/दफा उद्धृत नगर्नुहोस्:** प्रमाण खण्डमा उल्लेख भएका दफा, नजिर, र निर्णय नं. मात्र उद्धृत गर्नुहोस्।
 
 हालको मुद्दा: {case_id if case_id else "अज्ञात"}
 
 {manual_context}
 
-प्रमाण (कागजातका अंशहरू):
+प्रमाण (फैसलाका अंशहरू):
 {context}
 
 प्रश्न: {query}
@@ -496,7 +495,7 @@ def generate_nepali_answer(
         {"role": "user", "content": query.strip()},
     ]
 
-    response = _call_groq(messages, model_name, 1024, stream=stream)
+    response = _call_groq(messages, model_name, 1200, stream=stream)
     if response is None:
         return GROQ_UNAVAILABLE
 
@@ -506,5 +505,5 @@ def generate_nepali_answer(
     raw_answer = response.choices[0].message.content
     if raw_answer and raw_answer.strip():
         return clean_and_repair_nepali_output(raw_answer)
-
+    
     return NO_INFO

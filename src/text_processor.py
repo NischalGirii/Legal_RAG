@@ -8,7 +8,7 @@ OCR_FIXES = {
     "SEAT": "बैद्यनाथ",
     "SAT": "बैद्यनाथ",
     "Seq": "बैद्यनाथ",
-    "का.मु.प्": "",
+    "का.मु.प्": "का.मु. प्रधानन्यायाधीश",
     "धानन्यायाधीश": "प्रधानन्यायाधीश",
     "प्रधानन्यायाधीश श्": "प्रधानन्यायाधीश श्री",
     "रीरी": "श्री",
@@ -22,7 +22,22 @@ OCR_FIXES = {
     "श्श्री": "श्री",
     "प्रप्रधान": "प्रधान",
     "उत्रेषण": "उत्प्रेषण",
+    "मिन्नेको": "मिच्नेको",
+    "द्ण्डसजाय": "दण्ड सजाय",
+    "अंशबन्डा": "अंशबण्डा",
+    "अदालतः": "अदालत:",
 }
+
+LEGAL_OCR_PATTERNS = [
+    # Common Tesseract corruption: "3g." or "3q." instead of "अ.बं." (अदालती बन्दोबस्त)
+    (re.compile(r"(?<!\S)3[gq]\.?\s*(?=[०-९0-9]|१७१|दफा|धारा|\b)", re.I), "अ.बं. "),
+    (re.compile(r"(?<!\S)3[gq](?!\S)", re.I), "अ.बं."),
+    (re.compile(r"का\.?मु\.?\s*प्(?=धान|[\s,;]|$)", re.I), "का.मु. प्रधानन्यायाधीश "),
+    (re.compile(r"(?<!\S)कि\.?\s*नं\.?(?!\S)"), "कि.नं. "),
+    (re.compile(r"(?<!\S)पु\.?\s*(?:वे|अ)\.?\s*अदालत(?!\S)"), "पुनरावेदन अदालत "),
+    (re.compile(r"(?<!\S)जि\.?\s*अ\.?(?!\S)"), "जिल्ला अदालत "),
+    (re.compile(r"(?<!\S)ने\.?\s*का\.?\s*प\.?(?!\S)"), "नेकाप "),
+]
 
 _OCR_NOISE_TOKEN = re.compile(
     r"(?:(?<=\s)|(?<=^)|(?<=,))(?:SAT|SEAT|Seq|Ud|uM|mM|MM|uMM)(?=\s|,|$)",
@@ -30,9 +45,6 @@ _OCR_NOISE_TOKEN = re.compile(
 )
 _OCR_LONE_INITIAL = re.compile(r"(?:(?<=\s)|(?<=^))[MuU](?:d)?(?:\s+)(?=विद्वान|अधिवक्ता|सहन्याया|नायब|श्री)")
 
-# Whole-token phonetic/ASR corrections. Applied with whitespace-anchored
-# boundaries (see clean_asr_transcript) so a short garbled token like "किना"
-# never gets substituted inside an unrelated longer word (e.g. "किनारा").
 SPEECH_CORRECTIONS = {
     "मुद्धा": "मुद्दा",
     "मुद्धाहरु": "मुद्दाहरू",
@@ -51,10 +63,6 @@ SPEECH_CORRECTIONS = {
     "दिनना": "दिनुहोस्",
 }
 
-# Pre-compiled, whitespace-boundary-anchored patterns for each correction.
-# (?<!\S) / (?!\S) match "not preceded/followed by a non-space character",
-# i.e. start-of-string/whitespace on either side — the safe stand-in for
-# \b in a script where \b doesn't reliably respect Devanagari boundaries.
 _SPEECH_CORRECTION_PATTERNS = [
     (re.compile(r"(?<!\S)" + re.escape(typo) + r"(?!\S)"), fix)
     for typo, fix in SPEECH_CORRECTIONS.items()
@@ -69,23 +77,14 @@ def clean_asr_transcript(text: str) -> str:
     for pattern, fix in _SPEECH_CORRECTION_PATTERNS:
         cleaned = pattern.sub(fix, cleaned)
 
-    # 1. Police Regulations year: "दुयाजार उनन पचास" / "दुई हजार उनन्पचास" -> २०४९
     cleaned = re.sub(r"दु[ईय]?[ा]?जार\s*उन[न|न्]+[ -]?पचास[कोगोमु]*", "२०४९", cleaned, flags=re.I)
-
-    # 2. Fix ASR hallucinations like ९९०९९, ९९०९२ -> 9099
     cleaned = re.sub(r"निर्णय\s*(?:नं\.?\s*)?[९9]{2,3}[०0][९9]{2,3}\b", "निर्णय नं. 9099", cleaned)
     cleaned = re.sub(r"निर्णय\s*(?:नं\.?\s*)?[९9]{2,3}[०0][९9][२2]\b", "निर्णय नं. 9099", cleaned)
-
-    # 3. Fix 9100 variations: ९१०२ -> 9100, "नौँअजार एक्सेको" -> 9100
     cleaned = re.sub(r"निर्णय\s*(?:नं\.?\s*)?[९9][१1][०0][२2]\b", "निर्णय नं. 9100", cleaned)
     cleaned = re.sub(r"नौ[ँं]?\s*[अह]जार\s*(?:एक\s*सय|एक्से[कोगो]?|सय)", "9100", cleaned, flags=re.I)
     cleaned = re.sub(r"\b(?:एकानब्बे\s*सय|एकानब्बे)\b", "9100", cleaned, flags=re.I)
-
-    # 4. Spoken 9099 variations
     cleaned = re.sub(r"नौ[ँं]?\s*[अह]जार\s*(?:उनान्सय|नौ\s*सय)", "9099", cleaned, flags=re.I)
     cleaned = re.sub(r"\b(?:अजारुनन्सय|उनान्सय)\b", "9099", cleaned, flags=re.I)
-
-    # 5. Direct mentions like "निर्णय १००" -> 9100
     cleaned = re.sub(r"निर्णय\s*(?:नं\.?\s*)?100\b", "निर्णय नं. 9100", cleaned)
     cleaned = re.sub(r"निर्णय\s*(?:नं\.?\s*)?१००\b", "निर्णय नं. 9100", cleaned)
 
@@ -93,7 +92,7 @@ def clean_asr_transcript(text: str) -> str:
 
 
 def clean_text_for_tts(text: str) -> str:
-    """Strips Markdown syntax (asterisks, bullet points, headers) for clean speech."""
+    """Strips Markdown syntax for clean speech output."""
     if not text:
         return ""
     s = re.sub(r"#+\s*", "", text)
@@ -110,6 +109,8 @@ def apply_ocr_fixes(text: str) -> str:
         return text
     for wrong, correct in OCR_FIXES.items():
         text = text.replace(wrong, correct)
+    for pattern, replacement in LEGAL_OCR_PATTERNS:
+        text = pattern.sub(replacement, text)
     return text
 
 
@@ -153,7 +154,7 @@ def normalize_digits(text: str) -> str:
     return text.translate(NEPALI_DIGITS) if text else text
 
 
-def is_valid_devanagari_text(text: str, min_ratio: float = 0.4) -> bool:
+def is_valid_devanagari_text(text: str, min_ratio: float = 0.3) -> bool:
     if not text or len(text.strip()) < 20:
         return False
     letters = [c for c in text if c.isalpha()]
@@ -211,7 +212,7 @@ def chunk_by_prakaran(text: str, max_chars: int = 1000, overlap_chars: int = 150
     current_prakaran = None
     current_text = []
     current_len = 0
-    for i, part in enumerate(parts):
+    for part in parts:
         if re.match(pattern, part, re.I):
             if current_text and current_prakaran is not None:
                 chunk_text = " ".join(current_text).strip()

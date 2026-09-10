@@ -1,0 +1,19 @@
+[
+  {
+    "query": "निर्णय नं. ९०९९ मा अदालतको अन्तिम आदेश के थियो?",
+    "expected_decision_no": "9099",
+    "expected_case_id": "decision_9099",
+    "ground_truth_answer": "आदेश सदर भएको थियो।"
+  },
+  {
+    "query": "प्रहरी नियमावली २०४९ को ३० वर्षे सेवा अवधि सम्बन्धी मुद्दामा के ठहर भयो?",
+    "expected_decision_no": "9099",
+    "ground_truth_answer": "रिट खारेज भएको थियो।"
+  },
+  {
+    "query": "निर्णय नं. ९१०० मा पक्षकार को-को थिए?",
+    "expected_decision_no": "9100",
+    "expected_case_id": "decision_9100",
+    "ground_truth_answer": "पुनरावेदक र विपक्षी — फैसलाको हेडरमा उल्लेखित।"
+  }
+]

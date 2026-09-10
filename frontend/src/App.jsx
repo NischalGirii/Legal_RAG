@@ -97,6 +97,25 @@ function EndCallIcon() {
   );
 }
 
+function PlusIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+
 // ---- API base URL: override via VITE_API_BASE_URL in a .env file for
 //      any non-local deployment (staging, production, teammate's machine).
 //      Falls back to localhost so local `npm run dev` keeps working as-is. ----
@@ -118,6 +137,12 @@ function App() {
   const [voiceInputSupported, setVoiceInputSupported] = useState(true);
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [serverConfig, setServerConfig] = useState({ voice_live: false });
+
+  // ---- File attachment state ----
+  // { name: string, fileId: string|null, status: 'uploading'|'ready'|'error', error: string }
+  const [attachedFile, setAttachedFile] = useState(null);
+  const fileInputRef = useRef(null);
+
 
   const [sessionId] = useState(() => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -231,20 +256,60 @@ function App() {
   // override the backend's correctly-resolved one. The backend already
   // tracks case context per session_id — the frontend only needs to send
   // the message and session_id and let it own that state.
-  const fetchReply = async (text) => {
+  const fetchReply = async (text, fileId) => {
     const payload = { message: text, session_id: sessionId };
+    if (fileId) payload.attached_file_id = fileId;
     const res = await axios.post(`${API_BASE}/api/chat`, payload);
     return res.data.reply;
+  };
+
+  // ---------- File Attachment ----------
+  const handleFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    // Reset input so the same file can be re-selected after removal
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!file) return;
+
+    setAttachedFile({ name: file.name, fileId: null, status: 'uploading', error: '' });
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await axios.post(`${API_BASE}/api/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setAttachedFile({ name: file.name, fileId: res.data.file_id, status: 'ready', error: '' });
+    } catch (err) {
+      const detail = err.response?.data?.detail || 'Upload failed';
+      setAttachedFile({ name: file.name, fileId: null, status: 'error', error: detail });
+    }
+  };
+
+  const removeAttachment = () => {
+    setAttachedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
     const userText = input.trim();
-    setMessages((prev) => [...prev, { role: 'user', content: userText }]);
+    const fileId = attachedFile?.status === 'ready' ? attachedFile.fileId : null;
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: 'user',
+        content: userText,
+        attachedFileName: attachedFile?.name || null,
+      },
+    ]);
     setInput('');
+    setAttachedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setLoading(true);
     try {
-      const reply = await fetchReply(userText);
+      const reply = await fetchReply(userText, fileId);
       setMessages((prev) => [...prev, { role: 'assistant', content: reply }]);
     } catch (err) {
       console.error(err);
@@ -253,6 +318,7 @@ function App() {
       setLoading(false);
     }
   };
+
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -515,6 +581,11 @@ function App() {
             <div className="entry-label">{msg.role === 'user' ? 'तपाईं' : 'सहायक'}</div>
             <div className="entry-content">
               {msg.content}
+              {msg.attachedFileName && (
+                <div className="message-attachment-badge" title={msg.attachedFileName}>
+                  📎 {msg.attachedFileName}
+                </div>
+              )}
               {msg.role === 'assistant' && (
                 <button
                   type="button"
@@ -542,7 +613,63 @@ function App() {
 
       <div className="composer">
         {callError && <p className="dictate-status">{callError}</p>}
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".txt,.pdf,image/*"
+          style={{ display: 'none' }}
+          onChange={handleFileSelect}
+        />
+
+        {/* Attachment chip — shown above the text row when a file is selected */}
+        {attachedFile && (
+          <div className={`attachment-row`}>
+            <div className={`attachment-chip attachment-chip--${attachedFile.status}`}>
+              {attachedFile.status === 'uploading' && (
+                <span className="attachment-spinner" aria-hidden="true" />
+              )}
+              <span className="attachment-name" title={attachedFile.name}>
+                {attachedFile.name}
+              </span>
+              {attachedFile.status === 'uploading' && (
+                <span className="attachment-status-text">अपलोड हुँदैछ…</span>
+              )}
+              {attachedFile.status === 'ready' && (
+                <span className="attachment-status-text attachment-status-text--ready">✓ तयार</span>
+              )}
+              {attachedFile.status === 'error' && (
+                <span className="attachment-status-text attachment-status-text--error" title={attachedFile.error}>
+                  ✗ त्रुटि
+                </span>
+              )}
+              <button
+                type="button"
+                className="attachment-remove"
+                onClick={removeAttachment}
+                aria-label="संलग्न हटाउनुहोस्"
+                title="हटाउनुहोस्"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="composer-row">
+          {/* + Attach button */}
+          <button
+            type="button"
+            className="attach-button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading || attachedFile?.status === 'uploading'}
+            aria-label="फाइल संलग्न गर्नुहोस्"
+            title="PDF, TXT वा तस्बिर संलग्न गर्नुहोस्"
+          >
+            <PlusIcon />
+          </button>
+
           <textarea
             className="composer-field"
             value={input}
@@ -566,13 +693,14 @@ function App() {
             type="button"
             className="composer-send"
             onClick={sendMessage}
-            disabled={loading || !input.trim()}
+            disabled={loading || !input.trim() || attachedFile?.status === 'uploading'}
           >
             पठाउनुहोस् <SendIcon />
           </button>
         </div>
         <p className="disclaimer">यहाँ दिइएको जानकारी कानूनी सल्लाहको विकल्प होइन।</p>
       </div>
+
 
       {callActive && (
         <div className="call-overlay" role="dialog" aria-modal="true" aria-label="भ्वाइस कल">

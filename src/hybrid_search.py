@@ -113,12 +113,6 @@ PRINCIPLE_TERMS = ["कानूनी सिद्धान्त", "मुख�
 COMPARISON_TERMS = ["compare", "comparison", "difference", "फरक", "तुलना", "दुवै मुद्दा", "यी दुई"]
 RELATIVE_PRONOUNS = ["यस", "उक्त", "त्यस", "यो", "this", "said", "above", "सो"]
 
-# Explicit "enumerate everything" cues. Deliberately does NOT include bare
-# "के" or "कुन" — those two words appear in almost every single-case
-# factual/summary/about question ("अन्तिम आदेश के हो?", "के सम्बन्धी मुद्दा हो?",
-# "फैसला के थियो?", "यो निर्णय कुन मितिको हो?"), so using them alone as the
-# LIST_CASES trigger swallows those intents. A real "list everything you
-# know" question uses a doubled/enumerating phrase like these instead.
 LIST_CUES = [
     "कुन-कुन", "कुन कुन", "के-के", "के के",
     "कति वटा", "कति निर्णय", "कति मुद्दा",
@@ -130,10 +124,6 @@ def detect_query_intent(query: str) -> str:
     q = (query or "").lower().strip()
     normalized = normalize_digits(q)
 
-    # Specific, single-case intents are checked first. LIST_CASES is checked
-    # last and requires an explicit enumeration cue (see LIST_CUES) so it
-    # can't shadow ordinary factual/about/summary questions that happen to
-    # contain "के" or "कुन" plus a case-related noun.
     numbers = re.findall(r"\b([0-9]{3,4})\b", normalized)
     if any(term in q for term in COMPARISON_TERMS) or len(numbers) >= 2:
         return "COMPARISON"
@@ -145,7 +135,7 @@ def detect_query_intent(query: str) -> str:
         return "FACTUAL"
     if "मिति" in q or "कहिले" in q:
         return "FACTUAL"
-    if ("अन्तिम" in q and "आदेश" in q) or "खारेज" in q or "सदर" in q:
+    if ("अन्तिम" in q and "आदेश" in q) or "खारेज" in q or "सदर" in q or "निष्कर्ष" in q:
         return "FACTUAL"
     if any(term in q for term in ABOUT_TERMS):
         return "CASE_ABOUT"
@@ -283,7 +273,18 @@ def _make_result(meta: dict, score: float, extra: dict = None) -> dict:
         "is_header": _as_bool(meta.get("is_header", False)),
     }
 
-def perform_hybrid_search(query, collection, model, bm25, chunk_metadata, top_k=5, alpha=0.15, current_case=None, identifiers=None):
+def perform_hybrid_search(
+    query,
+    collection,
+    model,
+    bm25,
+    chunk_metadata,
+    top_k=5,
+    alpha=0.15,
+    current_case=None,
+    identifiers=None,
+    target_source=None,
+):
     if identifiers is None:
         identifiers = extract_query_identifiers(query)
 
@@ -296,57 +297,70 @@ def perform_hybrid_search(query, collection, model, bm25, chunk_metadata, top_k=
     target_decision_no = None
 
     lookups = get_lookup_indexes(chunk_metadata)
+    candidate_indices = None
     candidate_set = None
 
-    if identifiers.get("decision_no"):
-        target_decision_no = identifiers["decision_no"]
-        case_index = get_case_index()
-        case_info = case_index.get(target_decision_no)
-        if case_info:
-            target_case_id = case_info["case_id"]
-        else:
-            dec_hits = lookups["decision"].get(target_decision_no, [])
-            if dec_hits:
-                target_case_id = chunk_metadata[dec_hits[0]].get("case_id")
-
-    if current_case and current_case.get("case_id"):
-        target_case_id = current_case["case_id"]
-        if not identifiers.get("decision_no") and target_case_id.startswith("decision_"):
-            target_decision_no = target_case_id.replace("decision_", "")
-
-    if target_case_id and target_case_id in lookups["case"]:
-        candidate_indices = lookups["case"][target_case_id]
+    # 1. Scoping by target_source (uploaded file)
+    if target_source:
+        candidate_indices = [
+            i for i, m in enumerate(chunk_metadata) if m.get("source") == target_source
+        ]
         candidate_set = set(candidate_indices)
-    elif target_decision_no and target_decision_no in lookups["decision"]:
-        # The case_id we were given (often guessed as "decision_{no}" by a
-        # caller) doesn't match any case_id actually present in this corpus
-        # — most commonly because ingest.py falls back to a "file_<name>"
-        # case_id whenever it couldn't read the decision number cleanly off
-        # a given PDF. Recover by scoping via the decision-number index
-        # instead, which is populated independently of case_id naming.
-        candidate_indices = lookups["decision"][target_decision_no]
-        candidate_set = set(candidate_indices)
-        # Correct target_case_id to the real value on file (it may have been
-        # wrong, not just missing) so the Chroma `where` filter below
-        # actually matches instead of silently returning zero vectors.
-        target_case_id = chunk_metadata[candidate_indices[0]].get("case_id") or target_case_id
+        if candidate_indices:
+            target_case_id = chunk_metadata[candidate_indices[0]].get("case_id")
+            target_decision_no = chunk_metadata[candidate_indices[0]].get("decision_no")
     else:
-        candidate_indices = None
-        candidate_set = None
+        if identifiers.get("decision_no"):
+            target_decision_no = identifiers["decision_no"]
+            case_index = get_case_index()
+            case_info = case_index.get(target_decision_no)
+            if case_info:
+                target_case_id = case_info["case_id"]
+            else:
+                dec_hits = lookups["decision"].get(target_decision_no, [])
+                if dec_hits:
+                    target_case_id = chunk_metadata[dec_hits[0]].get("case_id")
 
+        if current_case and current_case.get("case_id"):
+            target_case_id = current_case["case_id"]
+            if not identifiers.get("decision_no") and target_case_id.startswith("decision_"):
+                target_decision_no = target_case_id.replace("decision_", "")
+
+        if target_case_id and target_case_id in lookups["case"]:
+            candidate_indices = lookups["case"][target_case_id]
+            candidate_set = set(candidate_indices)
+        elif target_decision_no and target_decision_no in lookups["decision"]:
+            candidate_indices = lookups["decision"][target_decision_no]
+            candidate_set = set(candidate_indices)
+            target_case_id = chunk_metadata[candidate_indices[0]].get("case_id") or target_case_id
+        else:
+            candidate_indices = None
+            candidate_set = None
+
+    # 2. Fast-path: Retrieve BOTH initial facts AND closing verdict for summaries
     if intent in ("CASE_SUMMARY", "CASE_LOOKUP", "CASE_ABOUT", "LEGAL_PRINCIPLE", "FACTUAL") and candidate_indices:
-        header_idx = lookups["headers"].get(target_case_id)
+        header_idx = next((i for i in candidate_indices if chunk_metadata[i].get("is_header")), None)
+        if header_idx is None and target_case_id:
+            header_idx = lookups["headers"].get(target_case_id)
+
         content_indices = [i for i in candidate_indices if i != header_idx]
         content_indices.sort(key=lambda i: chunk_metadata[i].get("page", 999))
-        limit = max(top_k * 2, 10)
-        content_indices = content_indices[:limit]
-        result_indices = ([header_idx] if header_idx is not None else []) + content_indices
+
+        if intent in ("CASE_SUMMARY", "CASE_ABOUT") and len(content_indices) > 6:
+            # First 3 chunks (background/claim) + Last 3 chunks (decision/verdict)
+            selected_indices = content_indices[:3] + content_indices[-3:]
+        else:
+            limit = max(top_k * 2, 10)
+            selected_indices = content_indices[:limit]
+
+        result_indices = ([header_idx] if header_idx is not None else []) + selected_indices
         results = []
         for idx in result_indices:
-            meta = chunk_metadata[idx]
-            r = _make_result(meta, 1.0, {"vector_score": 1.0, "bm25_score": 1.0, "lexical_score": 1.0})
-            r["index"] = idx
-            results.append(r)
+            if 0 <= idx < total:
+                meta = chunk_metadata[idx]
+                r = _make_result(meta, 1.0, {"vector_score": 1.0, "bm25_score": 1.0, "lexical_score": 1.0})
+                r["index"] = idx
+                results.append(r)
         return results
 
     search_n = min(max(top_k * BM25_CANDIDATE_MULTIPLIER, 20), total if candidate_indices is None else len(candidate_indices))
@@ -359,7 +373,9 @@ def perform_hybrid_search(query, collection, model, bm25, chunk_metadata, top_k=
         "n_results": safe_n,
         "include": ["distances", "metadatas"],
     }
-    if target_case_id:
+    if target_source:
+        query_kwargs["where"] = {"source": target_source}
+    elif target_case_id:
         query_kwargs["where"] = {"case_id": target_case_id}
 
     try:
@@ -392,7 +408,7 @@ def perform_hybrid_search(query, collection, model, bm25, chunk_metadata, top_k=
         union = set(vec_scores) | set(bm25_top)
         if target_case_id:
             header_idx = lookups["headers"].get(target_case_id)
-            if header_idx is not None:
+            if header_idx is not None and (candidate_set is None or header_idx in candidate_set):
                 union.add(header_idx)
         missing = [i for i in union if i not in sparse_scores]
         if missing:
@@ -405,7 +421,7 @@ def perform_hybrid_search(query, collection, model, bm25, chunk_metadata, top_k=
         union = set(vec_scores) | set(bm25_top)
         if target_case_id:
             header_idx = lookups["headers"].get(target_case_id)
-            if header_idx is not None:
+            if header_idx is not None and (candidate_set is None or header_idx in candidate_set):
                 union.add(header_idx)
         for i in union:
             if i not in bm25_for_doc:
@@ -417,6 +433,8 @@ def perform_hybrid_search(query, collection, model, bm25, chunk_metadata, top_k=
 
     results = []
     for i in union:
+        if i < 0 or i >= total:
+            continue
         meta = chunk_metadata[i]
         vector_score = vec_scores.get(i, 0.0)
         bm_score = max(0.0, float(bm25_for_doc.get(i, 0.0))) / max_bm25
@@ -449,6 +467,8 @@ def perform_hybrid_search(query, collection, model, bm25, chunk_metadata, top_k=
             if neighbour_idx < 0 or neighbour_idx >= total or neighbour_idx in seen_indices:
                 continue
             neighbour_meta = chunk_metadata[neighbour_idx]
+            if target_source and neighbour_meta.get("source") != target_source:
+                continue
             if neighbour_meta.get("case_id") == res["case_id"]:
                 nr = _make_result(neighbour_meta, neighbour_score, neighbour_extra)
                 nr["index"] = neighbour_idx
@@ -460,14 +480,6 @@ def perform_hybrid_search(query, collection, model, bm25, chunk_metadata, top_k=
 
 
 def snap_decision_number(decision_no: str, chunk_metadata: list | None = None, max_distance: int = 1) -> str:
-    """Normalize a decision number and, if it isn't an exact match, snap it
-    to the closest known decision (via case_index.json and, if provided,
-    chunk_metadata) when it's within a small edit distance — e.g. correcting
-    an ASR/typo slip like "9109" -> "9100". Always returns a usable string
-    (the normalized input itself if no close-enough match is found), since
-    callers (llm_generator.py) use the result directly to build a case_id
-    and never handle a None return.
-    """
     dec = normalize_digits(str(decision_no or ""))
     if not dec:
         return dec
@@ -496,6 +508,4 @@ def snap_decision_number(decision_no: str, chunk_metadata: list | None = None, m
         d = _edit_distance(dec, candidate)
         if d < best_dist:
             best, best_dist = candidate, d
-    # Only snap within tolerance; otherwise hand back the normalized input
-    # unchanged so callers still get a valid string to build a case_id from.
     return best if best_dist <= max_distance else dec

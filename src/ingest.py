@@ -9,7 +9,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-# Add project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fitz
@@ -32,6 +31,8 @@ from src.config import (
     CHROMA_UPSERT_BATCH,
     CHUNK_MAX_CHARS,
     CHUNK_OVERLAP_CHARS,
+    PRAKARAN_MAX_CHARS,
+    PRAKARAN_OVERLAP_CHARS,
     METADATA_LLM_MODEL,
     INGEST_WORKERS,
     ensure_models_dir,
@@ -59,6 +60,10 @@ def get_groq_client():
     if _groq_client is None and GROQ_API_KEY:
         _groq_client = Groq(api_key=GROQ_API_KEY)
     return _groq_client
+
+
+_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp")
+_SUPPORTED_UPLOAD_EXTS = (".pdf", ".txt") + _IMAGE_EXTS
 
 
 def collect_source_files(target_path: str) -> list[str]:
@@ -111,11 +116,11 @@ def extract_metadata_with_llm(full_text: str, file_name: str) -> dict:
     ], norm)
 
     subject = _first_match([
-        r"विषय\s*[ः:：-]\s*([^\n|]+)",
-        r"मुद्दाको\s*प्रकार\s*[ः:：-]\s*([^\n|]+)",
+        r"विषय\s*[ः:：-]\s*([^\n|।]+)",
+        r"मुद्दाको\s*प्रकार\s*[ः:：-]\s*([^\n|।]+)",
     ], full_text)
     if not subject or subject == "हुने":
-        case_types = ["उत्प्रेषण", "परमादेश", "बन्दीप्रत्यक्षीकरण", "नागरिकता", "अंशबण्डा"]
+        case_types = ["उत्प्रेषण", "परमादेश", "बन्दीप्रत्यक्षीकरण", "नागरिकता", "अंशबण्डा", "सम्पत्ति रोक्का"]
         for ct in case_types:
             if ct in full_text:
                 subject = ct
@@ -126,17 +131,21 @@ def extract_metadata_with_llm(full_text: str, file_name: str) -> dict:
     appellant = _first_match([
         r"(?:पुनरावेदक|निवेदक)\s*[ः:：-]\s*([^\n]+)",
         r"(?:पुनरावेदक/विपक्षी)\s*[ः:：-]\s*([^\n]+)",
+        r"(?:पुनरावेदक\s*M)\s*([^\n]+)",
     ], full_text)
     respondent = _first_match([
         r"(?:प्रत्यर्थी|विपक्षी)\s*[ः:：-]\s*([^\n]+)",
         r"(?:प्रत्यर्थी/निवेदक)\s*[ः:：-]\s*([^\n]+)",
+        r"(?:प्रत्यर्थी\s*M)\s*([^\n]+)",
     ], full_text)
 
     appellant_lawyer = _first_match([
         r"(?:पुनरावेदक|निवेदक)का\s*(?:तर्फबाट|कानून व्यवसायी)\s*[ः:：-]?\s*([^\n]+)",
+        r"पुनरावेदक/विपक्षीका\s*तर्फबाट\s*[ः:：-]?\s*([^\n]+)",
     ], full_text)
     respondent_lawyer = _first_match([
         r"(?:प्रत्यर्थी|विपक्षी)का\s*(?:तर्फबाट|कानून व्यवसायी)\s*[ः:：-]?\s*([^\n]+)",
+        r"प्रत्यर्थी/निवेदकका\s*तर्फबाट\s*[ः:：-]?\s*([^\n]+)",
     ], full_text)
 
     chief_justice = _first_match([
@@ -153,7 +162,7 @@ def extract_metadata_with_llm(full_text: str, file_name: str) -> dict:
     judges.extend(other_judges)
     judges_str = ", ".join(judges) if judges else ""
 
-    provisions = re.findall(r"(?:दफा|धारा)\s*[०-९0-9]+(?:\s*\([^)]+\))?", full_text)
+    provisions = re.findall(r"(?:दफा|धारा|अ\.बं\.)\s*[०-९0-9]+(?:\s*\([^)]+\))?", full_text)
     provisions = list(dict.fromkeys(provisions))
     provisions_str = ", ".join(provisions)
 
@@ -161,37 +170,43 @@ def extract_metadata_with_llm(full_text: str, file_name: str) -> dict:
     legal_principle = ""
     precedents = ""
 
+    # Send Head (first 4,000 chars) + Tail (last 4,000 chars) for complete context
     if groq_client and len(full_text) > 200:
-        # Retry with backoff, mirroring src/llm_generator.py's _call_groq —
-        # this call previously had a bare try/except with no retry, so a
-        # single transient rate-limit or timeout silently left this
-        # document's final_order/legal_principle/precedents permanently
-        # empty until someone noticed and manually re-ran ingestion. Those
-        # three fields feed the FACTUAL-intent fast path in
-        # answer_factual_query() at query time, so a failure here directly
-        # degrades answer quality for that case, not just this run.
-        prompt = f"""तलको नेपाली कानूनी फैसलाको पाठ पढेर निम्न तीन कुराहरू निकाल्नुहोस्। उत्तर JSON मा दिनुहोस्:
-{{
-  "final_order": "अन्तिम आदेश (जस्तै: सदर, उल्टी, खारेज, आदि)",
-  "legal_principle": "यस फैसलामा प्रतिपादन गरिएको मुख्य कानूनी सिद्धान्त वा ratio decidendi",
-  "precedents": "फैसलामा उल्लेख भएका अघिल्ला नजिरहरू (case citations)"
-}}
-यदि कुनै कुरा स्पष्ट छैन भने त्यसको लागि खाली स्ट्रिङ दिनुहोस्।
+        if len(full_text) > 8000:
+            sample_text = f"{full_text[:4000]}\n\n[...बीचको व्यहोरा...]\n\n{full_text[-4000:]}"
+        else:
+            sample_text = full_text
 
-फैसला:
-{full_text[:6000]}
+        prompt = f"""तलको नेपाली कानूनी फैसलाको प्रारम्भिक खण्ड र अन्तिम (फैसला/ठहर) खण्डको पाठ दिइएको छ।
+यसलाई ध्यानपूर्वक पढेर ३ वटा कुराहरू निकाल्नुहोस्। उत्तर JSON format मा मात्र दिनुहोस्:
+{{
+  "final_order": "सर्वोच्च अदालतको अन्तिम आदेश वा फैसलाको मुख्य निष्कर्ष (जस्तै: आदेश सदर, पुनरावेदन खारेज, परमादेश जारी, आदि)",
+  "legal_principle": "यस फैसलामा प्रतिपादन गरिएको मुख्य कानूनी सिद्धान्त वा नजिर",
+  "precedents": "फैसलामा उल्लेख भएका अघिल्ला नजिरहरू"
+}}
+यदि कुनै विवरण स्पष्ट छैन भने खाली स्ट्रिङ "" दिनुहोस्।
+
+फैसलाको पाठ:
+{sample_text}
 """
         for attempt in range(3):
             try:
                 with _llm_lock:
                     response = groq_client.chat.completions.create(
                         model=METADATA_LLM_MODEL,
-                        messages=[{"role": "user", "content": prompt}],
+                        messages=[
+                            {"role": "system", "content": "You are a legal metadata extraction assistant. You must output only a valid JSON object without any extra conversational text."},
+                            {"role": "user", "content": prompt}
+                        ],
                         temperature=0.1,
-                        max_tokens=500,
-                        response_format={"type": "json_object"},
+                        max_tokens=2048,  # Provides headroom for CoT reasoning tokens
                     )
-                result = json.loads(response.choices[0].message.content)
+                raw_text = response.choices[0].message.content or ""
+                # Safely extract the JSON object, ignoring any preceding <think> tags or thoughts
+                match = re.search(r"\{[\s\S]*\}", raw_text)
+                clean_json = match.group(0) if match else raw_text.strip()
+
+                result = json.loads(clean_json)
                 final_order = result.get("final_order", "")
                 legal_principle = result.get("legal_principle", "")
                 precedents = result.get("precedents", "")
@@ -202,14 +217,20 @@ def extract_metadata_with_llm(full_text: str, file_name: str) -> dict:
                     print(f"[LLM extraction] Attempt {attempt + 1} failed for {file_name}: {e} — retrying in {wait}s")
                     time.sleep(wait)
                 else:
-                    print(f"[LLM extraction] Failed for {file_name} after 3 attempts: {e} — "
-                          f"final_order/legal_principle/precedents will be empty for this document "
-                          f"until it is re-ingested.")
+                    print(f"[LLM extraction] Failed for {file_name} after 3 attempts: {e}")
+
+    # Fallback to tail of document for final order
     if not final_order:
-        for term in ["सदर", "उल्टी", "खारेज", "अमान्य", "बदर"]:
-            if term in full_text:
-                final_order = term
-                break
+        tail = full_text[-3500:]
+        if "सदर हुने ठहर्छ" in tail or "सदर" in tail:
+            final_order = "आदेश सदर"
+        elif "खारेज हुने ठहर्छ" in tail or "खारेज" in tail:
+            final_order = "पुनरावेदन/रिट खारेज"
+        elif "परमादेश जारी" in tail:
+            final_order = "परमादेश जारी"
+        elif "बदर हुने" in tail or "बदर" in tail:
+            final_order = "बदर"
+
     if not legal_principle:
         match = re.search(r"(?:सिद्धान्त|प्रतिपादन)\s*[:：]\s*([^\n।]+)", full_text)
         if match:
@@ -279,12 +300,12 @@ def _header_summary(case_meta: dict) -> str:
         f"विषय: {case_meta['subject']}\n"
         f"मुद्दाको प्रकार: {case_meta.get('case_type', '')}\n"
         f"न्यायाधीश: {case_meta['judges']}\n"
-        f"पुनरावेदक/निवेदक: {case_meta['parties'].get('appellant', '')}\n"
-        f"प्रत्यर्थी/विपक्षी: {case_meta['parties'].get('respondent', '')}\n"
+        f"पुनरावेदक/विपक्षी: {case_meta['parties'].get('appellant', '')}\n"
+        f"प्रत्यर्थी/निवेदक: {case_meta['parties'].get('respondent', '')}\n"
         f"पुनरावेदकका कानून व्यवसायी: {case_meta['appellant_lawyer']}\n"
         f"प्रत्यर्थीका कानून व्यवसायी: {case_meta['respondent_lawyer']}\n"
         f"प्रमुख कानूनी प्रावधान: {case_meta['provisions']}\n"
-        f"अन्तिम आदेश: {case_meta['final_order']}\n"
+        f"अन्तिम आदेश / फैसला: {case_meta['final_order']}\n"
         f"मुख्य कानूनी सिद्धान्त: {case_meta['legal_principle']}\n"
         f"अघिल्ला नजिरहरू: {case_meta['precedents']}"
     )
@@ -313,7 +334,14 @@ def _searchable_prefix(case_meta: dict, file_name: str, page: int, prakaran: str
 
 
 def _append_page_chunks(all_chunks, chunk_metadata, file_name, page_num, total_pages, cleaned_page_text, case_meta):
-    prakaran_chunks = chunk_by_prakaran(cleaned_page_text, max_chars=CHUNK_MAX_CHARS, overlap_chars=CHUNK_OVERLAP_CHARS)
+    # Prioritise section-aware (prakaran) chunking with a larger budget so
+    # complete legal arguments stay intact. Fall back to sentence chunking
+    # only when the page has no numbered sections.
+    prakaran_chunks = chunk_by_prakaran(
+        cleaned_page_text,
+        max_chars=PRAKARAN_MAX_CHARS,
+        overlap_chars=PRAKARAN_OVERLAP_CHARS,
+    )
     if prakaran_chunks:
         for chunk_text, p_no in prakaran_chunks:
             if not chunk_text.strip():
@@ -335,6 +363,32 @@ def _append_page_chunks(all_chunks, chunk_metadata, file_name, page_num, total_p
             "content": chunk, "is_header": False, **case_meta,
         })
 
+def _extract_image_text(doc_path: str, lang_flag: str) -> str:
+    try:
+        doc = fitz.open(doc_path)
+        page = doc[0]
+        native = page.get_text().strip()
+        if not is_valid_devanagari_text(native, min_ratio=0.1):
+            native = ocr_scanned_page(page, lang_flag)
+        doc.close()
+        return clean_devanagari_text(native)
+    except Exception:
+        try:
+            from PIL import Image as PILImage
+            img = PILImage.open(doc_path).convert("RGB")
+            import io as _io
+            buf = _io.BytesIO()
+            img.save(buf, format="PDF")
+            buf.seek(0)
+            doc = fitz.open(stream=buf.read(), filetype="pdf")
+            page = doc[0]
+            native = ocr_scanned_page(page, lang_flag)
+            doc.close()
+            return clean_devanagari_text(native)
+        except Exception as e:
+            print(f"  [image OCR fallback failed] {e}")
+            return ""
+
 
 def extract_pages(doc_path: str, lang_flag: str) -> tuple[list[str], dict]:
     file_name = os.path.basename(doc_path)
@@ -348,11 +402,14 @@ def extract_pages(doc_path: str, lang_flag: str) -> tuple[list[str], dict]:
     if file_name.lower().endswith(".pdf"):
         doc = fitz.open(doc_path)
         for pno in range(len(doc)):
-            native = doc[pno].get_text().strip()
-            if not is_valid_devanagari_text(native, min_ratio=0.4):
+            native = doc[pno].get_text("text").strip()
+            if not is_valid_devanagari_text(native, min_ratio=0.3):
                 native = ocr_scanned_page(doc[pno], lang_flag)
             pages.append(clean_devanagari_text(native))
         doc.close()
+    elif file_name.lower().endswith(_IMAGE_EXTS):
+        text = _extract_image_text(doc_path, lang_flag)
+        pages = [text] if text.strip() else [""]
     else:
         with open(doc_path, "r", encoding="utf-8") as fh:
             pages = [clean_devanagari_text(fh.read())]
@@ -644,6 +701,83 @@ def process_local_documents(target_path: str = None, rebuild: bool = False):
     )
     print(f"✅ Ingestion completed: {len(valid_files)} files, {len(all_documents)} chunks "
           f"({len(new_chunks)} new)")
+
+
+def process_uploaded_file(doc_path: str) -> dict:
+    """Incrementally ingest a single user-uploaded file (PDF, TXT, or image)."""
+    if not os.path.isfile(doc_path):
+        raise FileNotFoundError(f"Uploaded file not found: {doc_path}")
+
+    file_name = os.path.basename(doc_path)
+    ext = os.path.splitext(file_name)[1].lower()
+    if ext not in _SUPPORTED_UPLOAD_EXTS:
+        raise ValueError(f"Unsupported file type: {ext}")
+
+    print(f"[upload] Processing '{file_name}'...", flush=True)
+
+    lang_flag = resolve_ocr_lang_flag()
+    pages, case_meta = extract_pages(doc_path, lang_flag)
+    chunks, metas = chunks_from_pages(file_name, pages, case_meta)
+
+    if not chunks:
+        print(f"[upload] No text extracted from '{file_name}'.")
+        return {
+            "file_id": file_name,
+            "file_name": file_name,
+            "case_id": case_meta["case_id"],
+            "chunks_added": 0,
+        }
+
+    loaded = load_existing_index()
+    if loaded is None:
+        existing_meta, existing_docs = [], []
+    else:
+        existing_meta, existing_docs = loaded
+
+    start_index = len(existing_meta)
+
+    model = SentenceTransformer(EMBEDDING_MODEL_PATH)
+    chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
+    collection = get_or_create_collection(chroma_client, rebuild=False)
+    chroma_metas = [chroma_row(m, start_index + i) for i, m in enumerate(metas)]
+    upsert_embeddings(collection, model, chunks, chroma_metas, start_index)
+
+    all_meta = existing_meta + metas
+    all_docs = existing_docs + chunks
+
+    previous_summary: dict = {}
+    if os.path.exists(INGEST_METADATA_PATH):
+        try:
+            with open(INGEST_METADATA_PATH, "r", encoding="utf-8") as fh:
+                previous_summary = json.load(fh)
+        except Exception:
+            previous_summary = {}
+
+    fp = file_fingerprint(doc_path)
+    existing_fps = list(previous_summary.get("file_fingerprints", []))
+    existing_fps = [f for f in existing_fps if f.get("name") != file_name]
+    existing_fps.append(fp)
+
+    existing_file_names = [f for f in previous_summary.get("files", []) if f != file_name]
+    existing_file_names.append(file_name)
+
+    total_pages = previous_summary.get("total_pages", 0) + len(pages)
+
+    persist_indexes(
+        all_meta,
+        all_docs,
+        existing_fps,
+        total_pages,
+        existing_file_names,
+    )
+
+    print(f"[upload] ✅ '{file_name}' — {len(chunks)} chunks added (total corpus: {len(all_docs)}).")
+    return {
+        "file_id": file_name,
+        "file_name": file_name,
+        "case_id": case_meta["case_id"],
+        "chunks_added": len(chunks),
+    }
 
 
 def main():

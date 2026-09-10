@@ -498,6 +498,151 @@
   cursor: default;
 }
 
+/* ---------- Attach (+) Button ---------- */
+
+.attach-button {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: var(--text-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+  flex-shrink: 0;
+}
+
+.attach-button:hover:not(:disabled) {
+  border-color: var(--crimson);
+  color: var(--crimson);
+  background: var(--crimson-soft);
+}
+
+.attach-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ---------- Attachment Chip ---------- */
+
+.attachment-row {
+  max-width: 760px;
+  margin: 0 auto 10px;
+  display: flex;
+  align-items: center;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: var(--paper-raised, var(--paper));
+  font-size: 13px;
+  max-width: 400px;
+  overflow: hidden;
+}
+
+.attachment-chip--uploading {
+  opacity: 0.75;
+  border-color: var(--crimson);
+  animation: chipFade 1.2s ease-in-out infinite alternate;
+}
+
+.attachment-chip--ready {
+  border-color: #22a35a;
+}
+
+.attachment-chip--error {
+  border-color: #e05252;
+}
+
+@keyframes chipFade {
+  from { opacity: 0.55; }
+  to   { opacity: 0.9; }
+}
+
+.attachment-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--crimson);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spinAnim 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spinAnim {
+  to { transform: rotate(360deg); }
+}
+
+.attachment-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.attachment-status-text {
+  font-size: 11.5px;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.attachment-status-text--ready {
+  color: #22a35a;
+}
+
+.attachment-status-text--error {
+  color: #e05252;
+}
+
+.attachment-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--text-soft);
+  border-radius: 50%;
+  transition: color 0.2s ease, background 0.2s ease;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.attachment-remove:hover {
+  color: var(--crimson);
+  background: var(--crimson-soft);
+}
+
+/* ---------- Message Attachment Badge ---------- */
+
+.message-attachment-badge {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--text-soft);
+  background: var(--paper-raised, var(--paper));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
 .disclaimer {
   max-width: 760px;
   margin: 12px auto 0;
